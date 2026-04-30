@@ -12,15 +12,20 @@ jobs:
 
       - name: Prep Project
         run: |
-          # فك الملفات والتأكد من وجودها
-          unzip app.zip -d .
+          # فك أي ملف زيب موجود مهما كان اسمه
+          unzip -o *.zip -d .
+          
+          # تثبيت المكتبات وبناء ملفات الويب
           npm install --legacy-peer-deps
           npm run build
           
-          # إنشاء مشروع الأندرويد وتحديث الملفات اللي أنا باعتها
+          # إنشاء مشروع الأندرويد أو تحديثه
           npx cap add android || true
           
-          # نقل ملفات الجافا والـ Manifest اللي إحنا مجهزينها للأماكن الصح
+          # التأكد من وجود المجلدات قبل النقل
+          mkdir -p android/app/src/main/java/com/mohamed/cloner
+          
+          # نقل ملفات الجافا والـ Manifest للأماكن الصح (لو موجودة في الزيب)
           cp android/app/src/main/java/com/mohamed/cloner/MainActivity.java android/app/src/main/java/com/mohamed/cloner/MainActivity.java || true
           cp android/app/src/main/AndroidManifest.xml android/app/src/main/AndroidManifest.xml || true
           
@@ -37,3 +42,4 @@ jobs:
         with:
           name: Mohamed-Cloner-WorkProfile
           path: "android/app/build/outputs/apk/debug/*.apk"
+          
