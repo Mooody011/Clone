@@ -10,32 +10,48 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
 
-      - name: Prep Project
+      - name: Extract and Organize
         run: |
-          # فك أي ملف زيب موجود مهما كان اسمه
-          unzip -o *.zip -d .
+          # 1. فك ضغط أي ملف زيب
+          unzip -o *.zip -d temp_folder
           
-          # تثبيت المكتبات وبناء ملفات الويب
+          # 2. البحث عن ملف package.json ونقل كل حاجة لمكانها الصح
+          PACKAGE_PATH=$(find temp_folder -name "package.json" | head -n 1)
+          if [ -n "$PACKAGE_PATH" ]; then
+            BASE_DIR=$(dirname "$PACKAGE_PATH")
+            cp -r "$BASE_DIR"/* .
+            cp -r "$BASE_DIR"/.* . || true
+          fi
+          
+          # بنشوف إحنا فين دلوقتي
+          ls -F
+
+      - name: Install and Build Project
+        run: |
+          # تثبيت الأدوات الأساسية
           npm install --legacy-peer-deps
+          npm install -g @capacitor/cli @capacitor/android
+          
+          # بناء ملفات الويب (شرط أساسي لـ Capacitor)
           npm run build
           
-          # إنشاء مشروع الأندرويد أو تحديثه
-          npx cap add android || true
-          
-          # التأكد من وجود المجلدات قبل النقل
-          mkdir -p android/app/src/main/java/com/mohamed/cloner
-          
-          # نقل ملفات الجافا والـ Manifest للأماكن الصح (لو موجودة في الزيب)
-          cp android/app/src/main/java/com/mohamed/cloner/MainActivity.java android/app/src/main/java/com/mohamed/cloner/MainActivity.java || true
-          cp android/app/src/main/AndroidManifest.xml android/app/src/main/AndroidManifest.xml || true
-          
+          # مسح أي مشروع أندرويد قديم وبناء واحد جديد تماماً
+          rm -rf android
+          npx cap add android
           npx cap sync android
 
-      - name: Build APK
+      - name: Build Android APK
         run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug
+          # التأكد من وجود ملف gradlew قبل البدء
+          if [ -f "android/gradlew" ]; then
+            cd android
+            chmod +x gradlew
+            ./gradlew assembleDebug --no-daemon
+          else
+            echo "Error: gradlew file still not found!"
+            ls -R android || echo "Android folder is empty!"
+            exit 1
+          fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
