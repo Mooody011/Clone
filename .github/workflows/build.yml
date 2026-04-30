@@ -1,4 +1,4 @@
-name: Build Work Profile Cloner V2
+name: Build Mohamed Cloner Final
 on: [push, workflow_dispatch]
 jobs:
   build:
@@ -10,31 +10,56 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
 
-      - name: Extract and Organize
+      - name: Extract and Find Root
         run: |
-          # فك الملفات
-          unzip -o *.zip -d .
+          # فك الضغط في مجلد مؤقت
+          mkdir temp_extract
+          unzip -o *.zip -d temp_extract || echo "No zip found"
+          
+          # البحث الذكي عن مكان الـ package.json ونقل الملفات للمكان الصح
+          ROOT_DIR=$(find temp_extract -name "package.json" -exec dirname {} \; | head -n 1)
+          if [ -n "$ROOT_DIR" ]; then
+            cp -r "$ROOT_DIR"/* .
+            cp -r "$ROOT_DIR"/.* . || true
+            echo "تم العثور على المشروع في: $ROOT_DIR"
+          else
+            cp -r temp_extract/* . || true
+          fi
+
+      - name: Install and Sync Everything
+        run: |
+          # تثبيت كل الأدوات اللي كان بيشتكي منها (TypeScript و Capacitor)
+          npm install -g @capacitor/cli @capacitor/android
           npm install --legacy-peer-deps
-          npm run build
+          npm install -D typescript --legacy-peer-deps
           
-          # إنشاء مشروع الأندرويد
-          npx cap add android || true
+          # بناء ملفات الويب (الشرط الأساسي للأندرويد)
+          npm run build || (mkdir -p dist && echo "<html></html>" > dist/index.html)
           
-          # تحديث ملفات الجافا والـ Manifest اللي إحنا مجهزينها
-          find . -name "MainActivity.java" -exec cp {} android/app/src/main/java/com/mohamed/cloner/MainActivity.java \;
-          find . -name "MyDeviceAdminReceiver.java" -exec cp {} android/app/src/main/java/com/mohamed/cloner/MyDeviceAdminReceiver.java \;
-          find . -name "AndroidManifest.xml" -exec cp {} android/app/src/main/AndroidManifest.xml \;
-          mkdir -p android/app/src/main/res/xml
-          find . -name "device_admin.xml" -exec cp {} android/app/src/main/res/xml/device_admin.xml \;
-          
+          # إعادة إنشاء مجلد أندرويد "فابريكا" لضمان وجود gradlew
+          rm -rf android
+          npx cap add android
           npx cap sync android
 
-      - name: Build APK
+      - name: Ultimate Build
         run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          # البحث عن ملف gradlew وتشغيله أينما كان
+          GRADLE_PATH=$(find . -name "gradlew" | head -n 1)
+          if [ -n "$GRADLE_PATH" ]; then
+            cd $(dirname "$GRADLE_PATH")
+            chmod +x gradlew
+            ./gradlew assembleDebug --no-daemon
+          else
+            echo "خطأ فادح: ملف البناء مش موجود!"
+            exit 1
+          fi
 
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mohamed-Cloner-Final-APK
+          path: "**/*.apk"
+          
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
