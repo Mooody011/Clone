@@ -1,0 +1,42 @@
+name: Build Work Profile Cloner V2
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: actions/setup-java@v4
+        with: { distribution: 'temurin', java-version: '17' }
+
+      - name: Extract and Organize
+        run: |
+          # فك الملفات
+          unzip -o *.zip -d .
+          npm install --legacy-peer-deps
+          npm run build
+          
+          # إنشاء مشروع الأندرويد
+          npx cap add android || true
+          
+          # تحديث ملفات الجافا والـ Manifest اللي إحنا مجهزينها
+          find . -name "MainActivity.java" -exec cp {} android/app/src/main/java/com/mohamed/cloner/MainActivity.java \;
+          find . -name "MyDeviceAdminReceiver.java" -exec cp {} android/app/src/main/java/com/mohamed/cloner/MyDeviceAdminReceiver.java \;
+          find . -name "AndroidManifest.xml" -exec cp {} android/app/src/main/AndroidManifest.xml \;
+          mkdir -p android/app/src/main/res/xml
+          find . -name "device_admin.xml" -exec cp {} android/app/src/main/res/xml/device_admin.xml \;
+          
+          npx cap sync android
+
+      - name: Build APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Mohamed-Cloner-V2
+          path: "android/app/build/outputs/apk/debug/*.apk"
