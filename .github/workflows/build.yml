@@ -1,4 +1,4 @@
-name: Build Mohamed Cloner Force Open
+name: Build Mohamed Cloner Final V4
 on: [push, workflow_dispatch]
 jobs:
   build:
@@ -15,14 +15,12 @@ jobs:
           unzip -o *.zip -d . || echo "No zip"
           npm install --legacy-peer-deps
           npm run build || (mkdir -p dist && echo "<html></html>" > dist/index.html)
-          
-          # إنشاء مشروع الأندرويد
           rm -rf android
           npx cap add android
           
-      - name: Force Inject Launcher & Java
+      - name: Force Inject Final Fix
         run: |
-          # 1. كتابة ملف المانيفست (المسؤول عن زرار الفتح) إجبارياً
+          # 1. المانيفست: إضافة فلتر الاستقبال للبروفايل
           cat <<EOF > android/app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.mohamed.cloner">
@@ -32,24 +30,19 @@ jobs:
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
-                      <intent-filter>
-                          <action android:name="android.intent.action.VIEW" />
-                          <category android:name="android.intent.category.DEFAULT" />
-                          <category android:name="android.intent.category.BROWSABLE" />
-                          <data android:scheme="app" android:host="setup-work-profile" />
-                      </intent-filter>
                   </activity>
                   <receiver android:name=".MyDeviceAdminReceiver" android:label="Work Admin" android:permission="android.permission.BIND_DEVICE_ADMIN" android:exported="true">
                       <meta-data android:name="android.app.device_admin" android:resource="@xml/device_admin" />
                       <intent-filter>
                           <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+                          <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
                       </intent-filter>
                   </receiver>
               </application>
           </manifest>
           EOF
 
-          # 2. كتابة ملف الجافا (المسؤول عن الأوامر) إجبارياً
+          # 2. الجافا: إضافة أمر تفعيل البروفايل فور الانتهاء
           mkdir -p android/app/src/main/java/com/mohamed/cloner
           cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MainActivity.java
           package com.mohamed.cloner;
@@ -75,17 +68,26 @@ jobs:
           }
           EOF
 
-          # 3. كتابة ملف الـ Receiver
+          # 3. المستقبل (Receiver): هو ده اللي هيفعل البروفايل
           cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MyDeviceAdminReceiver.java
           package com.mohamed.cloner;
           import android.app.admin.DeviceAdminReceiver;
-          public class MyDeviceAdminReceiver extends DeviceAdminReceiver {}
+          import android.app.admin.DevicePolicyManager;
+          import android.content.ComponentName;
+          import android.content.Context;
+          import android.content.Intent;
+          public class MyDeviceAdminReceiver extends DeviceAdminReceiver {
+              @Override
+              public void onProfileProvisioningComplete(Context context, Intent intent) {
+                  DevicePolicyManager manager = (DevicePolicyManager) context.getSystemService(Context.DEVICE_POLICY_SERVICE);
+                  ComponentName componentName = new ComponentName(context, MyDeviceAdminReceiver.class);
+                  manager.setProfileEnabled(componentName);
+              }
+          }
           EOF
 
-          # 4. كتابة ملف الـ XML الخاص بالآدمن
           mkdir -p android/app/src/main/res/xml
-          echo '<device-admin></device-admin>' > android/app/src/main/res/xml/device_admin.xml
-          
+          echo '<device-admin><uses-policies><force-lock /></uses-policies></device-admin>' > android/app/src/main/res/xml/device_admin.xml
           npx cap sync android
 
       - name: Build APK
@@ -97,6 +99,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mohamed-Cloner-Final
+          name: Mohamed-Cloner-V4
           path: "android/app/build/outputs/apk/debug/*.apk"
           
