@@ -1,4 +1,4 @@
-name: Build Mohamed Cloner Pro V10
+name: Build Mohamed Cloner Pro V11
 on: [push, workflow_dispatch]
 jobs:
   build:
@@ -10,7 +10,7 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
 
-      - name: Create Pro UI
+      - name: Create Pro Bridge UI
         run: |
           mkdir -p dist
           cat <<EOF > dist/index.html
@@ -19,39 +19,38 @@ jobs:
           <head>
               <meta charset="UTF-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>ناسخ محمد V10</title>
+              <title>ناسخ محمد V11</title>
               <style>
                   body { font-family: sans-serif; background: #f0f2f5; margin: 0; padding: 15px; }
                   .header { background: #fff; padding: 20px; border-radius: 20px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 15px; }
                   .btn { background: #007bff; color: white; border: none; padding: 12px; border-radius: 12px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 10px; }
                   .app-item { background: #fff; padding: 15px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-                  .status-bar { padding: 10px; border-radius: 10px; text-align: center; margin-bottom: 15px; font-weight: bold; }
-                  .work { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-                  .personal { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+                  .mode-badge { padding: 10px; border-radius: 10px; text-align: center; margin-bottom: 15px; font-weight: bold; }
+                  .work { background: #d4edda; color: #155724; }
+                  .personal { background: #fff3cd; color: #856404; }
               </style>
           </head>
           <body>
-              <div class="header"><h1>ناسخ محمد V10 🚀</h1></div>
-              <div id="status" class="status-bar">جاري الفحص...</div>
+              <div class="header"><h1>ناسخ محمد V11 🌉</h1></div>
+              <div id="status" class="mode-badge">جاري التحقق...</div>
               <div id="actions"></div>
               <div id="app-list"></div>
               <script>
-                  function updateUI(isWorkMode) {
+                  function updateUI(isWork) {
                       const status = document.getElementById('status');
                       const actions = document.getElementById('actions');
-                      if(isWorkMode) {
-                          status.innerText = "✅ وضع العمل نشط - جاهز للنسخ";
-                          status.className = "status-bar work";
-                          actions.innerHTML = '<button class="btn" style="background:#28a745" onclick="loadApps()">تحديث قائمة تطبيقات الجهاز 🔄</button>';
-                          loadApps();
+                      if(isWork) {
+                          status.innerText = "✅ وضع العمل (مستقبل الأوامر)";
+                          status.className = "mode-badge work";
+                          actions.innerHTML = '<p style="text-align:center">النسخة دي جاهزة لاستلام التطبيقات من النسخة الشخصية</p>';
                       } else {
-                          status.innerText = "⚠️ أنت في الوضع الشخصي";
-                          status.className = "status-bar personal";
-                          actions.innerHTML = '<button class="btn" style="background:#e74c3c" onclick="activate()">1. تفعيل المساحة (أول مرة فقط) 🛠️</button><p style="text-align:center;font-size:0.8em">بعد التفعيل، افتح النسخة اللي عليها "شنطة" من بره</p>';
+                          status.innerText = "🏠 الوضع الشخصي (مُرسل الأوامر)";
+                          status.className = "mode-badge personal";
+                          actions.innerHTML = '<button class="btn" style="background:#e74c3c" onclick="activate()">1. تفعيل المساحة (أول مرة) 🛠️</button><button class="btn" style="background:#28a745" onclick="load()">2. عرض وتحديث تطبيقات الجهاز 🔄</button>';
                       }
                   }
                   function activate() { if(window.AndroidBridge) window.AndroidBridge.activateProfile(); }
-                  function loadApps() { if(window.AndroidBridge) window.AndroidBridge.getInstalledApps(); }
+                  function load() { if(window.AndroidBridge) window.AndroidBridge.getInstalledApps(); }
                   window.handleAppsResponse = (base64) => {
                       const apps = JSON.parse(decodeURIComponent(escape(atob(base64))));
                       const container = document.getElementById('app-list');
@@ -69,44 +68,40 @@ jobs:
           echo '{"appId":"com.mohamed.cloner","appName":"Mohamed Cloner","webDir":"dist"}' > capacitor.config.json
           echo '{"name":"app","dependencies":{"@capacitor/android":"6.0.0","@capacitor/core":"6.0.0","@capacitor/cli":"6.0.0"}}' > package.json
 
-      - name: Build and Sync
+      - name: Build and Inject Bridge Logic
         run: |
           npm install --legacy-peer-deps
           npm install -g @capacitor/cli
           npx cap add android
           
-      - name: Inject Pro Fixes
-        run: |
+          # جافا: كود الجسر الذكي (Cross-Profile)
           mkdir -p android/app/src/main/java/com/mohamed/cloner
           cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MainActivity.java
           package com.mohamed.cloner;
-          import android.os.Bundle;
-          import android.os.UserManager;
+          import android.os.*;
           import android.webkit.JavascriptInterface;
           import com.getcapacitor.BridgeActivity;
-          import android.content.pm.ApplicationInfo;
-          import android.content.pm.PackageManager;
-          import android.app.admin.DevicePolicyManager;
-          import android.content.ComponentName;
-          import android.content.Context;
-          import android.content.Intent;
+          import android.content.pm.*;
+          import android.app.admin.*;
+          import android.content.*;
           import android.util.Base64;
-          import org.json.JSONArray;
-          import org.json.JSONObject;
+          import org.json.*;
           import java.util.List;
 
           public class MainActivity extends BridgeActivity {
+              private static final String ACTION_CLONE = "com.mohamed.cloner.ACTION_CLONE";
+
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
+                  handleIntent(getIntent());
+                  
                   this.getBridge().getWebView().addJavascriptInterface(new Object() {
                       @JavascriptInterface
                       public void checkMode() {
                           runOnUiThread(() -> {
-                              // الطريقة الأضمن لمعرفة نوع الملف الشخصي
                               UserManager um = (UserManager) getSystemService(Context.USER_SERVICE);
-                              boolean isWork = um.isManagedProfile();
-                              getBridge().getWebView().evaluateJavascript("updateUI(" + isWork + ")", null);
+                              getBridge().getWebView().evaluateJavascript("updateUI(" + um.isManagedProfile() + ")", null);
                           });
                       }
                       @JavascriptInterface
@@ -122,8 +117,7 @@ jobs:
                           runOnUiThread(() -> {
                               try {
                                   PackageManager pm = getPackageManager();
-                                  // نطلب كل التطبيقات الموجودة في النظام حتى لو مش في البروفايل ده
-                                  List<ApplicationInfo> apps = pm.getInstalledApplications(PackageManager.MATCH_UNINSTALLED_PACKAGES);
+                                  List<ApplicationInfo> apps = pm.getInstalledApplications(0);
                                   JSONArray array = new JSONArray();
                                   for (ApplicationInfo app : apps) {
                                       if ((app.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
@@ -133,31 +127,57 @@ jobs:
                                           array.put(obj);
                                       }
                                   }
-                                  String base64 = Base64.encodeToString(array.toString().getBytes("UTF-8"), Base64.NO_WRAP);
-                                  getBridge().getWebView().evaluateJavascript("window.handleAppsResponse('" + base64 + "')", null);
+                                  String b64 = Base64.encodeToString(array.toString().getBytes("UTF-8"), Base64.NO_WRAP);
+                                  getBridge().getWebView().evaluateJavascript("window.handleAppsResponse('" + b64 + "')", null);
                               } catch (Exception e) {}
                           });
                       }
                       @JavascriptInterface
                       public void cloneApp(String pkg) {
                           runOnUiThread(() -> {
-                              try {
-                                  DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
-                                  ComponentName admin = new ComponentName(MainActivity.this, MyDeviceAdminReceiver.class);
-                                  // الأمر اللي بيسحب التطبيق من المساحة الشخصية لمساحة العمل
-                                  dpm.installExistingPackage(admin, pkg);
-                                  android.widget.Toast.makeText(MainActivity.this, "🚀 تم النسخ بنجاح!", 0).show();
-                              } catch (Exception e) {
-                                  android.widget.Toast.makeText(MainActivity.this, "❌ فشل النسخ: " + e.getMessage(), 1).show();
+                              UserManager um = (UserManager) getSystemService(Context.USER_SERVICE);
+                              if (!um.isManagedProfile()) {
+                                  // نحن في الوضع الشخصي: نرسل الأمر للوضع المعزول
+                                  Intent intent = new Intent(ACTION_CLONE);
+                                  intent.putExtra("pkg", pkg);
+                                  // هذا سيفتح التطبيق في مساحة العمل تلقائياً
+                                  startActivity(intent);
+                                  android.widget.Toast.makeText(MainActivity.this, "تم إرسال أمر النسخ لمساحة العمل...", 0).show();
+                              } else {
+                                  executeClone(pkg);
                               }
                           });
                       }
                   }, "AndroidBridge");
               }
+
+              @Override
+              protected void onNewIntent(Intent intent) {
+                  super.onNewIntent(intent);
+                  handleIntent(intent);
+              }
+
+              private void handleIntent(Intent intent) {
+                  if (intent != null && ACTION_CLONE.equals(intent.getAction())) {
+                      String pkg = intent.getStringExtra("pkg");
+                      if (pkg != null) executeClone(pkg);
+                  }
+              }
+
+              private void executeClone(String pkg) {
+                  try {
+                      DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+                      ComponentName admin = new ComponentName(this, MyDeviceAdminReceiver.class);
+                      dpm.installExistingPackage(admin, pkg);
+                      android.widget.Toast.makeText(this, "🚀 تم استنساخ " + pkg + " بنجاح!", 0).show();
+                  } catch (Exception e) {
+                      android.widget.Toast.makeText(this, "❌ خطأ في النسخ: " + e.getMessage(), 1).show();
+                  }
+              }
           }
           EOF
-          
-          # الـ Receiver والمانيفست
+
+          # المانيفست مع فلاتر الاستقبال العابرة للملفات الشخصية
           cat <<EOF > android/app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.mohamed.cloner">
@@ -165,33 +185,43 @@ jobs:
               <application android:allowBackup="true" android:icon="@mipmap/ic_launcher" android:label="Mohamed Cloner" android:supportsRtl="true" android:theme="@style/AppTheme">
                   <activity android:name="com.mohamed.cloner.MainActivity" android:exported="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:launchMode="singleTop">
                       <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+                      <intent-filter>
+                          <action android:name="com.mohamed.cloner.ACTION_CLONE" />
+                          <category android:name="android.intent.category.DEFAULT" />
+                      </intent-filter>
                   </activity>
                   <receiver android:name=".MyDeviceAdminReceiver" android:label="Work Admin" android:permission="android.permission.BIND_DEVICE_ADMIN" android:exported="true">
                       <meta-data android:name="android.app.device_admin" android:resource="@xml/device_admin" />
-                      <intent-filter><action android:name="android.app.action.DEVICE_ADMIN_ENABLED" /><action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" /></intent-filter>
+                      <intent-filter>
+                          <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+                          <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
+                      </intent-filter>
                   </receiver>
               </application>
           </manifest>
           EOF
-          
+
+          # المستقبل (Receiver) مع تفعيل فلاتر التواصل بين الملفات
           cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MyDeviceAdminReceiver.java
           package com.mohamed.cloner;
-          import android.app.admin.DeviceAdminReceiver;
-          import android.app.admin.DevicePolicyManager;
-          import android.content.ComponentName;
-          import android.content.Context;
-          import android.content.Intent;
+          import android.app.admin.*;
+          import android.content.*;
           public class MyDeviceAdminReceiver extends DeviceAdminReceiver {
               @Override
               public void onProfileProvisioningComplete(Context context, Intent intent) {
                   DevicePolicyManager manager = (DevicePolicyManager) context.getSystemService(Context.DEVICE_POLICY_SERVICE);
-                  manager.setProfileEnabled(new ComponentName(context, MyDeviceAdminReceiver.class));
+                  ComponentName componentName = new ComponentName(context, MyDeviceAdminReceiver.class);
+                  manager.setProfileEnabled(componentName);
+                  
+                  // السماح للأوامر بالانتقال من الشخصي إلى العمل
+                  IntentFilter filter = new IntentFilter("com.mohamed.cloner.ACTION_CLONE");
+                  manager.addCrossProfileIntentFilter(componentName, filter, DevicePolicyManager.FLAG_PARENT_CAN_ACCESS_MANAGED);
               }
           }
           EOF
           mkdir -p android/app/src/main/res/xml
           echo '<device-admin></device-admin>' > android/app/src/main/res/xml/device_admin.xml
-          sed -i 's/versionCode 1/versionCode 50/g' android/app/build.gradle
+          sed -i 's/versionCode 1/versionCode 60/g' android/app/build.gradle
           npx cap sync android
 
       - name: Build APK
@@ -203,6 +233,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mohamed-Cloner-V10
+          name: Mohamed-Cloner-V11
           path: "android/app/build/outputs/apk/debug/*.apk"
           
