@@ -10,10 +10,10 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
 
-      - name: Create Project Files From Scratch
+      - name: Create Project Files
         run: |
-          # 1. إنشاء ملفات الويب والواجهة
           mkdir -p dist
+          # إنشاء الواجهة
           cat <<EOF > dist/index.html
           <!DOCTYPE html>
           <html lang="ar" dir="rtl">
@@ -47,18 +47,22 @@ jobs:
           </html>
           EOF
 
-          # 2. إنشاء ملف الإعدادات
+          # إنشاء ملفات الإعدادات مع إضافة المكتبات المطلوبة بوضوح
           echo '{"appId":"com.mohamed.cloner","appName":"Mohamed Cloner","webDir":"dist"}' > capacitor.config.json
-          echo '{"name":"app","dependencies":{"@capacitor/android":"^6.0.0","@capacitor/core":"^6.0.0"}}' > package.json
+          echo '{"name":"app","dependencies":{"@capacitor/android":"6.0.0","@capacitor/core":"6.0.0","@capacitor/cli":"6.0.0"}}' > package.json
 
-      - name: Initialize Android Project
+      - name: Install Tools and Build
         run: |
+          # تثبيت الأدوات محلياً وعالمياً لضمان التشغيل
           npm install --legacy-peer-deps
+          npm install -g @capacitor/cli
+          
+          # بناء المشروع
           npx cap add android
           
       - name: Force Inject Java & Manifest
         run: |
-          # 3. حقن المانيفست لضمان زرار "فتح" وصلاحية رؤية التطبيقات
+          # حقن المانيفست
           cat <<EOF > android/app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.mohamed.cloner">
@@ -81,7 +85,7 @@ jobs:
           </manifest>
           EOF
 
-          # 4. حقن كود الجافا لقرائة التطبيقات والنسخ
+          # حقن كود الجافا
           mkdir -p android/app/src/main/java/com/mohamed/cloner
           cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MainActivity.java
           package com.mohamed.cloner;
@@ -132,7 +136,7 @@ jobs:
           }
           EOF
 
-          # 5. ملفات الإدارة
+          # ملفات الإدارة
           cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MyDeviceAdminReceiver.java
           package com.mohamed.cloner;
           import android.app.admin.DeviceAdminReceiver;
@@ -151,8 +155,7 @@ jobs:
           mkdir -p android/app/src/main/res/xml
           echo '<device-admin></device-admin>' > android/app/src/main/res/xml/device_admin.xml
           
-          # رفع رقم الإصدار لضمان التثبيت
-          sed -i 's/versionCode 1/versionCode 10/g' android/app/build.gradle
+          sed -i 's/versionCode 1/versionCode 11/g' android/app/build.gradle
           npx cap sync android
 
       - name: Build APK
@@ -164,6 +167,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mohamed-Cloner-Pro
+          name: Mohamed-Cloner-Final
           path: "android/app/build/outputs/apk/debug/*.apk"
           
