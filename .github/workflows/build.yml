@@ -1,4 +1,4 @@
-name: Build Mohamed Cloner Final Pro
+name: Build Mohamed Cloner Pro V8
 on: [push, workflow_dispatch]
 jobs:
   build:
@@ -10,7 +10,7 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
 
-      - name: Create UI with Activation Button
+      - name: Create Pro UI
         run: |
           mkdir -p dist
           cat <<EOF > dist/index.html
@@ -19,41 +19,32 @@ jobs:
           <head>
               <meta charset="UTF-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>ناسخ محمد برو</title>
+              <title>ناسخ محمد برو V8</title>
               <style>
-                  body { font-family: sans-serif; background: #f0f2f5; margin: 0; padding: 15px; }
-                  .header { background: #fff; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
-                  .app-item { background: #fff; padding: 15px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
-                  .btn { background: #007bff; color: white; border: none; padding: 12px; border-radius: 10px; cursor: pointer; font-weight: bold; }
-                  .activate-btn { background: #e74c3c; width: 100%; margin-bottom: 15px; font-size: 1.1em; border: 2px solid #c0392b; }
-                  .refresh-btn { background: #28a745; margin-bottom: 15px; width: 100%; }
-                  .clone-btn { background: #0866ff; }
+                  body { font-family: sans-serif; background: #f4f7f6; margin: 0; padding: 15px; }
+                  .header { background: #fff; padding: 20px; border-radius: 20px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 20px; border-bottom: 5px solid #007bff; }
+                  .btn { background: #007bff; color: white; border: none; padding: 12px; border-radius: 12px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 10px; }
+                  .app-item { background: #fff; padding: 15px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
+                  .status { color: #e74c3c; font-weight: bold; font-size: 0.9em; text-align: center; margin-bottom: 10px; }
               </style>
           </head>
           <body>
-              <div class="header"><h1>ناسخ محمد V7 🚀</h1><p>الخطوة الأولى: فعل المساحة، وبعدها انسخ براحتك</p></div>
-              
-              <button class="btn activate-btn" onclick="activate()">1. تفعيل مساحة العمل (النسخ) 🛠️</button>
-              <button class="btn refresh-btn" onclick="loadApps()">2. تحديث قائمة التطبيقات 🔄</button>
-              
-              <div id="app-list">انتظر تحميل القائمة...</div>
-              
+              <div class="header"><h1>ناسخ محمد V8 🚀</h1><p>نسخة التحكم الاحترافية</p></div>
+              <div id="status-msg" class="status">لو دي أول مرة، فعل المساحة بالأحمر الأول</div>
+              <button class="btn" style="background:#e74c3c" onclick="activate()">1. تفعيل / إصلاح مساحة العمل 🛠️</button>
+              <button class="btn" style="background:#28a745" onclick="loadApps()">2. تحديث قائمة التطبيقات 🔄</button>
+              <div id="app-list">جاري جلب تطبيقاتك...</div>
               <script>
                   function activate() { if(window.AndroidBridge) window.AndroidBridge.activateProfile(); }
-                  function loadApps() {
-                      document.getElementById('app-list').innerText = "جاري التحميل...";
-                      if(window.AndroidBridge) window.AndroidBridge.getInstalledApps();
-                  }
-                  window.handleAppsResponse = (base64Data) => {
-                      try {
-                          const json = decodeURIComponent(escape(atob(base64Data)));
-                          const apps = JSON.parse(json);
-                          const container = document.getElementById('app-list');
-                          container.innerHTML = '';
-                          apps.forEach(app => {
-                              container.innerHTML += '<div class="app-item"><div><b>' + app.name + '</b><br><small>' + app.package + '</small></div><button class="btn clone-btn" onclick="clone(\'' + app.package + '\')">نسخ</button></div>';
-                          });
-                      } catch (e) { document.getElementById('app-list').innerText = "حدث خطأ في عرض القائمة"; }
+                  function loadApps() { if(window.AndroidBridge) window.AndroidBridge.getInstalledApps(); }
+                  window.handleAppsResponse = (base64) => {
+                      const json = decodeURIComponent(escape(atob(base64)));
+                      const apps = JSON.parse(json);
+                      const container = document.getElementById('app-list');
+                      container.innerHTML = '';
+                      apps.forEach(app => {
+                          container.innerHTML += '<div class="app-item"><div><b>' + app.name + '</b><br><small>' + app.package + '</small></div><button class="btn" style="width:auto; padding:8px 15px;" onclick="clone(\'' + app.package + '\')">نسخ</button></div>';
+                      });
                   };
                   function clone(pkg) { if(window.AndroidBridge) window.AndroidBridge.cloneApp(pkg); }
                   window.onload = () => { setTimeout(loadApps, 2000); };
@@ -64,13 +55,14 @@ jobs:
           echo '{"appId":"com.mohamed.cloner","appName":"Mohamed Cloner","webDir":"dist"}' > capacitor.config.json
           echo '{"name":"app","dependencies":{"@capacitor/android":"6.0.0","@capacitor/core":"6.0.0","@capacitor/cli":"6.0.0"}}' > package.json
 
-      - name: Build and Inject Logic
+      - name: Build and Sync
         run: |
           npm install --legacy-peer-deps
           npm install -g @capacitor/cli
           npx cap add android
           
-          # جافا: إضافة دالة التفعيل activateProfile
+      - name: Inject Master Logic
+        run: |
           mkdir -p android/app/src/main/java/com/mohamed/cloner
           cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MainActivity.java
           package com.mohamed.cloner;
@@ -87,6 +79,7 @@ jobs:
           import org.json.JSONArray;
           import org.json.JSONObject;
           import java.util.List;
+
           public class MainActivity extends BridgeActivity {
               @Override
               protected void onCreate(Bundle savedInstanceState) {
@@ -126,10 +119,11 @@ jobs:
                               try {
                                   DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
                                   ComponentName admin = new ComponentName(MainActivity.this, MyDeviceAdminReceiver.class);
-                                  dpm.enableSystemApp(admin, pkg);
-                                  android.widget.Toast.makeText(MainActivity.this, "تم نسخ " + pkg, 0).show();
+                                  // الأمر السحري للنسخ الفوري
+                                  dpm.installExistingPackage(admin, pkg);
+                                  android.widget.Toast.makeText(MainActivity.this, "تمت إضافة النسخة بنجاح!", 0).show();
                               } catch (Exception e) {
-                                  android.widget.Toast.makeText(MainActivity.this, "يجب تفعيل المساحة بالزر الأحمر أولاً", 1).show();
+                                  android.widget.Toast.makeText(MainActivity.this, "خطأ: افتح نسخة (العمل) من التطبيق لتتمكن من النسخ", 1).show();
                               }
                           });
                       }
@@ -172,7 +166,7 @@ jobs:
           EOF
           mkdir -p android/app/src/main/res/xml
           echo '<device-admin></device-admin>' > android/app/src/main/res/xml/device_admin.xml
-          sed -i 's/versionCode 1/versionCode 20/g' android/app/build.gradle
+          sed -i 's/versionCode 1/versionCode 30/g' android/app/build.gradle
           npx cap sync android
 
       - name: Build APK
@@ -184,6 +178,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mohamed-Cloner-V7-Final
+          name: Mohamed-Cloner-V8
           path: "android/app/build/outputs/apk/debug/*.apk"
           
