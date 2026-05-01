@@ -1,4 +1,4 @@
-name: Build Mohamed Cloner Pro V8
+name: Build Mohamed Cloner Pro V10
 on: [push, workflow_dispatch]
 jobs:
   build:
@@ -19,35 +19,49 @@ jobs:
           <head>
               <meta charset="UTF-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>ناسخ محمد برو V8</title>
+              <title>ناسخ محمد V10</title>
               <style>
-                  body { font-family: sans-serif; background: #f4f7f6; margin: 0; padding: 15px; }
-                  .header { background: #fff; padding: 20px; border-radius: 20px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 20px; border-bottom: 5px solid #007bff; }
+                  body { font-family: sans-serif; background: #f0f2f5; margin: 0; padding: 15px; }
+                  .header { background: #fff; padding: 20px; border-radius: 20px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 15px; }
                   .btn { background: #007bff; color: white; border: none; padding: 12px; border-radius: 12px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 10px; }
                   .app-item { background: #fff; padding: 15px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-                  .status { color: #e74c3c; font-weight: bold; font-size: 0.9em; text-align: center; margin-bottom: 10px; }
+                  .status-bar { padding: 10px; border-radius: 10px; text-align: center; margin-bottom: 15px; font-weight: bold; }
+                  .work { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+                  .personal { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
               </style>
           </head>
           <body>
-              <div class="header"><h1>ناسخ محمد V8 🚀</h1><p>نسخة التحكم الاحترافية</p></div>
-              <div id="status-msg" class="status">لو دي أول مرة، فعل المساحة بالأحمر الأول</div>
-              <button class="btn" style="background:#e74c3c" onclick="activate()">1. تفعيل / إصلاح مساحة العمل 🛠️</button>
-              <button class="btn" style="background:#28a745" onclick="loadApps()">2. تحديث قائمة التطبيقات 🔄</button>
-              <div id="app-list">جاري جلب تطبيقاتك...</div>
+              <div class="header"><h1>ناسخ محمد V10 🚀</h1></div>
+              <div id="status" class="status-bar">جاري الفحص...</div>
+              <div id="actions"></div>
+              <div id="app-list"></div>
               <script>
+                  function updateUI(isWorkMode) {
+                      const status = document.getElementById('status');
+                      const actions = document.getElementById('actions');
+                      if(isWorkMode) {
+                          status.innerText = "✅ وضع العمل نشط - جاهز للنسخ";
+                          status.className = "status-bar work";
+                          actions.innerHTML = '<button class="btn" style="background:#28a745" onclick="loadApps()">تحديث قائمة تطبيقات الجهاز 🔄</button>';
+                          loadApps();
+                      } else {
+                          status.innerText = "⚠️ أنت في الوضع الشخصي";
+                          status.className = "status-bar personal";
+                          actions.innerHTML = '<button class="btn" style="background:#e74c3c" onclick="activate()">1. تفعيل المساحة (أول مرة فقط) 🛠️</button><p style="text-align:center;font-size:0.8em">بعد التفعيل، افتح النسخة اللي عليها "شنطة" من بره</p>';
+                      }
+                  }
                   function activate() { if(window.AndroidBridge) window.AndroidBridge.activateProfile(); }
                   function loadApps() { if(window.AndroidBridge) window.AndroidBridge.getInstalledApps(); }
                   window.handleAppsResponse = (base64) => {
-                      const json = decodeURIComponent(escape(atob(base64)));
-                      const apps = JSON.parse(json);
+                      const apps = JSON.parse(decodeURIComponent(escape(atob(base64))));
                       const container = document.getElementById('app-list');
                       container.innerHTML = '';
                       apps.forEach(app => {
-                          container.innerHTML += '<div class="app-item"><div><b>' + app.name + '</b><br><small>' + app.package + '</small></div><button class="btn" style="width:auto; padding:8px 15px;" onclick="clone(\'' + app.package + '\')">نسخ</button></div>';
+                          container.innerHTML += '<div class="app-item"><div><b>'+app.name+'</b><br><small>'+app.package+'</small></div><button class="btn" style="width:auto; padding:8px 15px;" onclick="clone(\''+app.package+'\')">نسخ</button></div>';
                       });
                   };
                   function clone(pkg) { if(window.AndroidBridge) window.AndroidBridge.cloneApp(pkg); }
-                  window.onload = () => { setTimeout(loadApps, 2000); };
+                  window.onload = () => { setTimeout(() => { if(window.AndroidBridge) window.AndroidBridge.checkMode(); }, 1000); };
               </script>
           </body>
           </html>
@@ -61,12 +75,13 @@ jobs:
           npm install -g @capacitor/cli
           npx cap add android
           
-      - name: Inject Master Logic
+      - name: Inject Pro Fixes
         run: |
           mkdir -p android/app/src/main/java/com/mohamed/cloner
           cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MainActivity.java
           package com.mohamed.cloner;
           import android.os.Bundle;
+          import android.os.UserManager;
           import android.webkit.JavascriptInterface;
           import com.getcapacitor.BridgeActivity;
           import android.content.pm.ApplicationInfo;
@@ -86,6 +101,15 @@ jobs:
                   super.onCreate(savedInstanceState);
                   this.getBridge().getWebView().addJavascriptInterface(new Object() {
                       @JavascriptInterface
+                      public void checkMode() {
+                          runOnUiThread(() -> {
+                              // الطريقة الأضمن لمعرفة نوع الملف الشخصي
+                              UserManager um = (UserManager) getSystemService(Context.USER_SERVICE);
+                              boolean isWork = um.isManagedProfile();
+                              getBridge().getWebView().evaluateJavascript("updateUI(" + isWork + ")", null);
+                          });
+                      }
+                      @JavascriptInterface
                       public void activateProfile() {
                           runOnUiThread(() -> {
                               Intent intent = new Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE);
@@ -98,7 +122,8 @@ jobs:
                           runOnUiThread(() -> {
                               try {
                                   PackageManager pm = getPackageManager();
-                                  List<ApplicationInfo> apps = pm.getInstalledApplications(0);
+                                  // نطلب كل التطبيقات الموجودة في النظام حتى لو مش في البروفايل ده
+                                  List<ApplicationInfo> apps = pm.getInstalledApplications(PackageManager.MATCH_UNINSTALLED_PACKAGES);
                                   JSONArray array = new JSONArray();
                                   for (ApplicationInfo app : apps) {
                                       if ((app.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
@@ -119,11 +144,11 @@ jobs:
                               try {
                                   DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
                                   ComponentName admin = new ComponentName(MainActivity.this, MyDeviceAdminReceiver.class);
-                                  // الأمر السحري للنسخ الفوري
+                                  // الأمر اللي بيسحب التطبيق من المساحة الشخصية لمساحة العمل
                                   dpm.installExistingPackage(admin, pkg);
-                                  android.widget.Toast.makeText(MainActivity.this, "تمت إضافة النسخة بنجاح!", 0).show();
+                                  android.widget.Toast.makeText(MainActivity.this, "🚀 تم النسخ بنجاح!", 0).show();
                               } catch (Exception e) {
-                                  android.widget.Toast.makeText(MainActivity.this, "خطأ: افتح نسخة (العمل) من التطبيق لتتمكن من النسخ", 1).show();
+                                  android.widget.Toast.makeText(MainActivity.this, "❌ فشل النسخ: " + e.getMessage(), 1).show();
                               }
                           });
                       }
@@ -132,7 +157,7 @@ jobs:
           }
           EOF
           
-          # المانيفست والـ Receiver
+          # الـ Receiver والمانيفست
           cat <<EOF > android/app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.mohamed.cloner">
@@ -166,7 +191,7 @@ jobs:
           EOF
           mkdir -p android/app/src/main/res/xml
           echo '<device-admin></device-admin>' > android/app/src/main/res/xml/device_admin.xml
-          sed -i 's/versionCode 1/versionCode 30/g' android/app/build.gradle
+          sed -i 's/versionCode 1/versionCode 50/g' android/app/build.gradle
           npx cap sync android
 
       - name: Build APK
@@ -178,6 +203,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mohamed-Cloner-V8
+          name: Mohamed-Cloner-V10
           path: "android/app/build/outputs/apk/debug/*.apk"
           
