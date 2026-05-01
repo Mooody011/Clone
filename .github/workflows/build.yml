@@ -1,4 +1,4 @@
-name: Build Mohamed Cloner V3
+name: Build Mohamed Cloner Final V3
 on: [push, workflow_dispatch]
 jobs:
   build:
@@ -10,23 +10,22 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
 
-      - name: Extract and Sync
+      - name: Extract and Prep
         run: |
           unzip -o *.zip -d .
           npm install --legacy-peer-deps
           npm run build
           
-          # مسح الأندرويد القديم وبناء واحد جديد تماماً عشان نضمن ملفات الـ V3
+          # بناء مشروع الأندرويد
           rm -rf android
           npx cap add android
           
-          # نقل ملفات الجافا والـ Manifest المخصصة للأماكن الصح
+          # إجبار السيرفر على وضع إعدادات الـ Launcher (زرار الفتح)
+          # السطر ده هيدور على الملفات اللي أنا بعتهالك ويحطها في قلب الأندرويد
           find . -name "MainActivity.java" -exec cp {} android/app/src/main/java/com/mohamed/cloner/MainActivity.java \;
-          find . -name "MyDeviceAdminReceiver.java" -exec cp {} android/app/src/main/java/com/mohamed/cloner/MyDeviceAdminReceiver.java \;
           find . -name "AndroidManifest.xml" -exec cp {} android/app/src/main/AndroidManifest.xml \;
-          mkdir -p android/app/src/main/res/xml
-          find . -name "device_admin.xml" -exec cp {} android/app/src/main/res/xml/device_admin.xml \;
           
+          # تحديث المشروع
           npx cap sync android
 
       - name: Build APK
@@ -38,6 +37,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mohamed-Cloner-V3
+          name: Mohamed-Cloner-Final
           path: "android/app/build/outputs/apk/debug/*.apk"
           
