@@ -1,4 +1,4 @@
-name: Build Mohamed Cloner Final V4
+name: Build Mohamed Cloner Pro V6
 on: [push, workflow_dispatch]
 jobs:
   build:
@@ -10,84 +10,21 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
 
-      - name: Prep and Build Web
+      - name: Extract and Build
         run: |
-          unzip -o *.zip -d . || echo "No zip"
+          unzip -o *.zip -d .
           npm install --legacy-peer-deps
-          npm run build || (mkdir -p dist && echo "<html></html>" > dist/index.html)
+          npm run build
           rm -rf android
           npx cap add android
           
-      - name: Force Inject Final Fix
-        run: |
-          # 1. المانيفست: إضافة فلتر الاستقبال للبروفايل
-          cat <<EOF > android/app/src/main/AndroidManifest.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.mohamed.cloner">
-              <application android:allowBackup="true" android:icon="@mipmap/ic_launcher" android:label="Mohamed Cloner" android:roundIcon="@mipmap/ic_launcher_round" android:supportsRtl="true" android:theme="@style/AppTheme">
-                  <activity android:name="com.mohamed.cloner.MainActivity" android:exported="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:launchMode="singleTop">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-                  <receiver android:name=".MyDeviceAdminReceiver" android:label="Work Admin" android:permission="android.permission.BIND_DEVICE_ADMIN" android:exported="true">
-                      <meta-data android:name="android.app.device_admin" android:resource="@xml/device_admin" />
-                      <intent-filter>
-                          <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
-                          <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
-                      </intent-filter>
-                  </receiver>
-              </application>
-          </manifest>
-          EOF
-
-          # 2. الجافا: إضافة أمر تفعيل البروفايل فور الانتهاء
-          mkdir -p android/app/src/main/java/com/mohamed/cloner
-          cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MainActivity.java
-          package com.mohamed.cloner;
-          import android.os.Bundle;
-          import android.webkit.JavascriptInterface;
-          import com.getcapacitor.BridgeActivity;
-          import android.app.admin.DevicePolicyManager;
-          import android.content.ComponentName;
-          import android.content.Intent;
-          public class MainActivity extends BridgeActivity {
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  this.getBridge().getWebView().addJavascriptInterface(new Object() {
-                      @JavascriptInterface
-                      public void startWorkProfile() {
-                          Intent intent = new Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE);
-                          intent.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, new ComponentName(MainActivity.this, MyDeviceAdminReceiver.class));
-                          startActivityForResult(intent, 555);
-                      }
-                  }, "AndroidBridge");
-              }
-          }
-          EOF
-
-          # 3. المستقبل (Receiver): هو ده اللي هيفعل البروفايل
-          cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MyDeviceAdminReceiver.java
-          package com.mohamed.cloner;
-          import android.app.admin.DeviceAdminReceiver;
-          import android.app.admin.DevicePolicyManager;
-          import android.content.ComponentName;
-          import android.content.Context;
-          import android.content.Intent;
-          public class MyDeviceAdminReceiver extends DeviceAdminReceiver {
-              @Override
-              public void onProfileProvisioningComplete(Context context, Intent intent) {
-                  DevicePolicyManager manager = (DevicePolicyManager) context.getSystemService(Context.DEVICE_POLICY_SERVICE);
-                  ComponentName componentName = new ComponentName(context, MyDeviceAdminReceiver.class);
-                  manager.setProfileEnabled(componentName);
-              }
-          }
-          EOF
-
+          # نقل ملفات البرمجة المتقدمة
+          find . -name "MainActivity.java" -exec cp {} android/app/src/main/java/com/mohamed/cloner/MainActivity.java \;
+          find . -name "MyDeviceAdminReceiver.java" -exec cp {} android/app/src/main/java/com/mohamed/cloner/MyDeviceAdminReceiver.java \;
+          find . -name "AndroidManifest.xml" -exec cp {} android/app/src/main/AndroidManifest.xml \;
           mkdir -p android/app/src/main/res/xml
-          echo '<device-admin><uses-policies><force-lock /></uses-policies></device-admin>' > android/app/src/main/res/xml/device_admin.xml
+          find . -name "device_admin.xml" -exec cp {} android/app/src/main/res/xml/device_admin.xml \;
+          
           npx cap sync android
 
       - name: Build APK
@@ -99,6 +36,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mohamed-Cloner-V4
+          name: Mohamed-Cloner-Pro-V6
           path: "android/app/build/outputs/apk/debug/*.apk"
           
