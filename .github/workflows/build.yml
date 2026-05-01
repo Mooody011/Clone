@@ -10,21 +10,149 @@ jobs:
       - uses: actions/setup-java@v4
         with: { distribution: 'temurin', java-version: '17' }
 
-      - name: Extract and Build
+      - name: Create Project Files From Scratch
         run: |
-          unzip -o *.zip -d .
+          # 1. إنشاء ملفات الويب والواجهة
+          mkdir -p dist
+          cat <<EOF > dist/index.html
+          <!DOCTYPE html>
+          <html lang="ar" dir="rtl">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>ناسخ محمد الذكي</title>
+              <style>
+                  body { font-family: sans-serif; background: #f0f2f5; margin: 0; padding: 15px; }
+                  .header { background: #fff; padding: 20px; border-radius: 15px; text-align: center; box-shadow: 0 2px 10px rgba(0,0,0,0.1); margin-bottom: 20px; }
+                  .app-item { background: #fff; padding: 15px; border-radius: 12px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+                  .btn { background: #007bff; color: white; border: none; padding: 10px 15px; border-radius: 8px; cursor: pointer; }
+              </style>
+          </head>
+          <body>
+              <div class="header"><h1>ناسخ محمد الذكي V6 🚀</h1><p>اختر تطبيق لنسخه</p></div>
+              <div id="app-list">جاري تحميل التطبيقات...</div>
+              <script>
+                  function displayApps(json) {
+                      const apps = JSON.parse(json);
+                      const container = document.getElementById('app-list');
+                      container.innerHTML = '';
+                      apps.forEach(app => {
+                          container.innerHTML += '<div class="app-item"><div><b>' + app.name + '</b><br><small>' + app.package + '</small></div><button class="btn" onclick="clone(\'' + app.package + '\')">نسخ</button></div>';
+                      });
+                  }
+                  function clone(pkg) { if(window.AndroidBridge) window.AndroidBridge.cloneApp(pkg); }
+                  window.onload = () => { setTimeout(() => { if(window.AndroidBridge) window.AndroidBridge.getInstalledApps(); }, 1500); };
+              </script>
+          </body>
+          </html>
+          EOF
+
+          # 2. إنشاء ملف الإعدادات
+          echo '{"appId":"com.mohamed.cloner","appName":"Mohamed Cloner","webDir":"dist"}' > capacitor.config.json
+          echo '{"name":"app","dependencies":{"@capacitor/android":"^6.0.0","@capacitor/core":"^6.0.0"}}' > package.json
+
+      - name: Initialize Android Project
+        run: |
           npm install --legacy-peer-deps
-          npm run build
-          rm -rf android
           npx cap add android
           
-          # نقل ملفات البرمجة المتقدمة
-          find . -name "MainActivity.java" -exec cp {} android/app/src/main/java/com/mohamed/cloner/MainActivity.java \;
-          find . -name "MyDeviceAdminReceiver.java" -exec cp {} android/app/src/main/java/com/mohamed/cloner/MyDeviceAdminReceiver.java \;
-          find . -name "AndroidManifest.xml" -exec cp {} android/app/src/main/AndroidManifest.xml \;
+      - name: Force Inject Java & Manifest
+        run: |
+          # 3. حقن المانيفست لضمان زرار "فتح" وصلاحية رؤية التطبيقات
+          cat <<EOF > android/app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.mohamed.cloner">
+              <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+              <application android:allowBackup="true" android:icon="@mipmap/ic_launcher" android:label="Mohamed Cloner" android:roundIcon="@mipmap/ic_launcher_round" android:supportsRtl="true" android:theme="@style/AppTheme">
+                  <activity android:name="com.mohamed.cloner.MainActivity" android:exported="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:launchMode="singleTop">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+                  <receiver android:name=".MyDeviceAdminReceiver" android:label="Work Admin" android:permission="android.permission.BIND_DEVICE_ADMIN" android:exported="true">
+                      <meta-data android:name="android.app.device_admin" android:resource="@xml/device_admin" />
+                      <intent-filter>
+                          <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+                          <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
+                      </intent-filter>
+                  </receiver>
+              </application>
+          </manifest>
+          EOF
+
+          # 4. حقن كود الجافا لقرائة التطبيقات والنسخ
+          mkdir -p android/app/src/main/java/com/mohamed/cloner
+          cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MainActivity.java
+          package com.mohamed.cloner;
+          import android.os.Bundle;
+          import android.webkit.JavascriptInterface;
+          import com.getcapacitor.BridgeActivity;
+          import android.content.pm.ApplicationInfo;
+          import android.content.pm.PackageManager;
+          import android.app.admin.DevicePolicyManager;
+          import android.content.ComponentName;
+          import android.content.Context;
+          import org.json.JSONArray;
+          import org.json.JSONObject;
+          import java.util.List;
+          public class MainActivity extends BridgeActivity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  this.getBridge().getWebView().addJavascriptInterface(new Object() {
+                      @JavascriptInterface
+                      public void getInstalledApps() {
+                          runOnUiThread(() -> {
+                              try {
+                                  PackageManager pm = getPackageManager();
+                                  List<ApplicationInfo> apps = pm.getInstalledApplications(0);
+                                  JSONArray array = new JSONArray();
+                                  for (ApplicationInfo app : apps) {
+                                      JSONObject obj = new JSONObject();
+                                      obj.put("name", app.loadLabel(pm).toString());
+                                      obj.put("package", app.packageName);
+                                      array.put(obj);
+                                  }
+                                  getBridge().getWebView().evaluateJavascript("displayApps('" + array.toString().replace("'", "\\\\'") + "')", null);
+                              } catch (Exception e) {}
+                          });
+                      }
+                      @JavascriptInterface
+                      public void cloneApp(String pkg) {
+                          runOnUiThread(() -> {
+                              DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
+                              ComponentName admin = new ComponentName(MainActivity.this, MyDeviceAdminReceiver.class);
+                              try { dpm.enableSystemApp(admin, pkg); } catch (Exception e) {}
+                              android.widget.Toast.makeText(MainActivity.this, "تم طلب نسخة: " + pkg, 0).show();
+                          });
+                      }
+                  }, "AndroidBridge");
+              }
+          }
+          EOF
+
+          # 5. ملفات الإدارة
+          cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MyDeviceAdminReceiver.java
+          package com.mohamed.cloner;
+          import android.app.admin.DeviceAdminReceiver;
+          import android.app.admin.DevicePolicyManager;
+          import android.content.ComponentName;
+          import android.content.Context;
+          import android.content.Intent;
+          public class MyDeviceAdminReceiver extends DeviceAdminReceiver {
+              @Override
+              public void onProfileProvisioningComplete(Context context, Intent intent) {
+                  DevicePolicyManager manager = (DevicePolicyManager) context.getSystemService(Context.DEVICE_POLICY_SERVICE);
+                  manager.setProfileEnabled(new ComponentName(context, MyDeviceAdminReceiver.class));
+              }
+          }
+          EOF
           mkdir -p android/app/src/main/res/xml
-          find . -name "device_admin.xml" -exec cp {} android/app/src/main/res/xml/device_admin.xml \;
+          echo '<device-admin></device-admin>' > android/app/src/main/res/xml/device_admin.xml
           
+          # رفع رقم الإصدار لضمان التثبيت
+          sed -i 's/versionCode 1/versionCode 10/g' android/app/build.gradle
           npx cap sync android
 
       - name: Build APK
@@ -36,6 +164,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mohamed-Cloner-Pro-V6
+          name: Mohamed-Cloner-Pro
           path: "android/app/build/outputs/apk/debug/*.apk"
           
