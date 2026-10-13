@@ -1,4 +1,4 @@
-name: Build Android 16 App Cloner
+name: Build Standalone App Cloner Android 16
 
 on:
   push:
@@ -30,11 +30,17 @@ jobs:
 
       - name: Generate Project Files and Build APK
         run: |
-          # 1. إنشاء هيكل الفولدرات
+          # 1. إنشاء الفولدرات
           mkdir -p app/src/main/java/com/mohamed/cloner
-          mkdir -p app/src/main/res/xml
+          mkdir -p app/src/main/assets
 
-          # 2. إنشاء ملف settings.gradle
+          # 2. توليد مفتاح وشهادة التوقيع (لتوقيع النسخ بـ V1/V2/V3 داخل الموبايل)
+          openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 10000 -subj "/CN=MohamedCloner/O=Mohamed/C=EG"
+          openssl pkcs8 -topk8 -inform PEM -outform DER -in key.pem -out app/src/main/assets/cloner.pk8 -nocrypt
+          openssl x509 -inform PEM -outform DER -in cert.pem -out app/src/main/assets/cloner.x509.der
+          rm -f key.pem cert.pem
+
+          # 3. إنشاء ملف settings.gradle
           cat << 'EOF' > settings.gradle
           pluginManagement {
               repositories {
@@ -54,14 +60,14 @@ jobs:
           include ':app'
           EOF
 
-          # 3. إنشاء ملف gradle.properties
+          # 4. إنشاء ملف gradle.properties
           cat << 'EOF' > gradle.properties
           org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
           android.useAndroidX=true
           android.suppressUnsupportedCompileSdk=36
           EOF
 
-          # 4. إنشاء ملف build.gradle الرئيسي
+          # 5. إنشاء ملف build.gradle الرئيسي
           cat << 'EOF' > build.gradle
           plugins {
               id 'com.android.application' version '8.7.2' apply false
@@ -69,7 +75,7 @@ jobs:
           }
           EOF
 
-          # 5. إنشاء ملف app/build.gradle الموجه لأندرويد 16 (API 36)
+          # 6. إنشاء ملف app/build.gradle مع مكتبة توقيع جوجل الرسمية apksig
           cat << 'EOF' > app/build.gradle
           plugins {
               id 'com.android.application'
@@ -84,8 +90,8 @@ jobs:
                   applicationId "com.mohamed.cloner"
                   minSdk 26
                   targetSdk 36
-                  versionCode 1
-                  versionName "1.0-Android16"
+                  versionCode 2
+                  versionName "2.0-Standalone"
               }
 
               buildTypes {
@@ -100,35 +106,31 @@ jobs:
               kotlinOptions {
                   jvmTarget = '17'
               }
+              packaging {
+                  resources {
+                      excludes += '/META-INF/{AL2.0,LGPL2.1}'
+                  }
+              }
           }
 
           dependencies {
-              // استخدام مكتبات أندرويد القياسية لضمان سرعة البناء وعدم حدوث أخطاء
+              implementation 'com.android.tools.build:apksig:8.5.2'
           }
           EOF
 
-          # 6. إنشاء ملف سياسات العزل device_admin.xml
-          cat << 'EOF' > app/src/main/res/xml/device_admin.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <device-admin xmlns:android="http://schemas.android.com/apk/res/android">
-              <uses-policies>
-                  <limit-password />
-              </uses-policies>
-          </device-admin>
-          EOF
-
-          # 7. إنشاء ملف AndroidManifest.xml
+          # 7. إنشاء ملف AndroidManifest.xml (بدون أي مساحة عمل)
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
               xmlns:tools="http://schemas.android.com/tools">
 
-              <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
                   tools:ignore="QueryAllPackagesPermission" />
+              <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+              <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
 
               <application
-                  android:label="ناسخ التطبيقات - محمد"
+                  android:label="ناسخ التطبيقات المستقل - محمد"
                   android:icon="@android:drawable/sym_def_app_icon"
                   android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
                   android:supportsRtl="true">
@@ -144,61 +146,378 @@ jobs:
                   </activity>
 
                   <receiver
-                      android:name=".CloneDeviceAdminReceiver"
-                      android:label="محرك المساحة المزدوجة"
-                      android:permission="android.permission.BIND_DEVICE_ADMIN"
-                      android:exported="true">
-                      <meta-data
-                          android:name="android.app.device_admin"
-                          android:resource="@xml/device_admin" />
-                      <intent-filter>
-                          <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
-                          <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
-                      </intent-filter>
-                  </receiver>
+                      android:name=".InstallReceiver"
+                      android:exported="true" />
 
               </application>
           </manifest>
           EOF
 
-          # 8. إنشاء كود محرك المساحة المزدوجة CloneDeviceAdminReceiver.kt
-          cat << 'EOF' > app/src/main/java/com/mohamed/cloner/CloneDeviceAdminReceiver.kt
+          # 8. إنشاء مستقبل عملية التثبيت المباشر InstallReceiver.kt
+          cat << 'EOF' > app/src/main/java/com/mohamed/cloner/InstallReceiver.kt
           package com.mohamed.cloner
 
-          import android.app.admin.DeviceAdminReceiver
-          import android.app.admin.DevicePolicyManager
-          import android.content.ComponentName
+          import android.content.BroadcastReceiver
           import android.content.Context
           import android.content.Intent
+          import android.content.pm.PackageInstaller
+          import android.os.Build
           import android.widget.Toast
 
-          class CloneDeviceAdminReceiver : DeviceAdminReceiver() {
-              override fun onProfileProvisioningComplete(context: Context, intent: Intent) {
-                  val manager = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-                  val componentName = ComponentName(context.applicationContext, CloneDeviceAdminReceiver::class.java)
-                  manager.setProfileName(componentName, "مساحة النسخ - محمد")
-                  manager.setProfileEnabled(componentName)
-                  Toast.makeText(context, "تم تفعيل المساحة المزدوجة بنجاح!", Toast.LENGTH_LONG).show()
+          class InstallReceiver : BroadcastReceiver() {
+              override fun onReceive(context: Context, intent: Intent) {
+                  when (val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, -1)) {
+                      PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                          val confirmIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                              intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+                          } else {
+                              @Suppress("DEPRECATION")
+                              intent.getParcelableExtra(Intent.EXTRA_INTENT)
+                          }
+                          if (confirmIntent != null) {
+                              confirmIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                              context.startActivity(confirmIntent)
+                          }
+                      }
+                      PackageInstaller.STATUS_SUCCESS -> {
+                          Toast.makeText(context, "تم تثبيت النسخة المستقلة بنجاح!", Toast.LENGTH_LONG).show()
+                      }
+                      else -> {
+                          val msg = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "خطأ رقم $status"
+                          Toast.makeText(context, "لم يكتمل التثبيت: $msg", Toast.LENGTH_LONG).show()
+                      }
+                  }
               }
           }
           EOF
 
-          # 9. إنشاء كود الواجهة والتطبيق الرئيسي MainActivity.kt
+          # 9. إنشاء محرك تعديل ملف المانيفيست الثنائي AxmlPatcher.kt
+          cat << 'EOF' > app/src/main/java/com/mohamed/cloner/AxmlPatcher.kt
+          package com.mohamed.cloner
+
+          import java.io.ByteArrayOutputStream
+          import java.nio.ByteBuffer
+          import java.nio.ByteOrder
+
+          object AxmlPatcher {
+
+              fun patchManifest(data: ByteArray, cloneNum: Int, newAppLabel: String): Pair<ByteArray, String> {
+                  if (data.size < 36 || readU16(data, 0) != 0x0003) {
+                      throw IllegalArgumentException("ملف AndroidManifest غير صالح")
+                  }
+
+                  val spPos = readU16(data, 2)
+                  if (readU16(data, spPos) != 0x0001) {
+                      throw IllegalArgumentException("لم يتم العثور على جدول النصوص StringPool")
+                  }
+
+                  val spHeaderSize = readU16(data, spPos + 2)
+                  val spSize = readInt(data, spPos + 4)
+                  val stringCount = readInt(data, spPos + 8)
+                  val flags = readInt(data, spPos + 16)
+                  val stringsStart = readInt(data, spPos + 20)
+                  val isUtf8 = (flags and 0x100) != 0
+
+                  val strings = ArrayList<String>(stringCount + 32)
+                  for (i in 0 until stringCount) {
+                      val offset = readInt(data, spPos + spHeaderSize + i * 4)
+                      val strPos = spPos + stringsStart + offset
+                      if (isUtf8) {
+                          var p = strPos
+                          val b1 = data[p++].toInt() and 0xFF
+                          if ((b1 and 0x80) != 0) p++
+                          var bLen = data[p++].toInt() and 0xFF
+                          if ((bLen and 0x80) != 0) {
+                              bLen = ((bLen and 0x7F) shl 8) or (data[p++].toInt() and 0xFF)
+                          }
+                          strings.add(String(data, p, bLen, Charsets.UTF_8))
+                      } else {
+                          var p = strPos
+                          var cLen = readU16(data, p)
+                          p += 2
+                          if ((cLen and 0x8000) != 0) {
+                              cLen = ((cLen and 0x7FFF) shl 16) or readU16(data, p)
+                              p += 2
+                          }
+                          strings.add(String(data, p, cLen * 2, Charsets.UTF_16LE))
+                      }
+                  }
+
+                  val originalCount = strings.size
+                  fun addNewString(s: String): Int {
+                      for (idx in originalCount until strings.size) {
+                          if (strings[idx] == s) return idx
+                      }
+                      strings.add(s)
+                      return strings.size - 1
+                  }
+
+                  val afterSpPos = spPos + spSize
+                  val rest = data.copyOfRange(afterSpPos, data.size)
+
+                  var resIds = IntArray(0)
+                  var origPackage = ""
+
+                  // المرحلة الأولى: قراءة الـ Resource IDs واستخراج اسم الحزمة الأصلي
+                  var pos = 0
+                  while (pos + 8 <= rest.size) {
+                      val cType = readU16(rest, pos)
+                      val cHeaderSize = readU16(rest, pos + 2)
+                      val cSize = readInt(rest, pos + 4)
+                      if (cSize <= 0 || pos + cSize > rest.size) break
+
+                      if (cType == 0x0180) {
+                          val count = (cSize - cHeaderSize) / 4
+                          resIds = IntArray(count) { k -> readInt(rest, pos + cHeaderSize + k * 4) }
+                      } else if (cType == 0x0102) {
+                          val elemNameIdx = readInt(rest, pos + cHeaderSize + 4)
+                          val elemName = strings.getOrNull(elemNameIdx) ?: ""
+                          if (elemName == "manifest") {
+                              val attrStart = readU16(rest, pos + cHeaderSize + 8)
+                              val attrSize = readU16(rest, pos + cHeaderSize + 10)
+                              val attrCount = readU16(rest, pos + cHeaderSize + 12)
+                              for (i in 0 until attrCount) {
+                                  val aPos = pos + cHeaderSize + attrStart + i * attrSize
+                                  val aName = strings.getOrNull(readInt(rest, aPos + 4)) ?: ""
+                                  if (aName == "package") {
+                                      val rawVal = readInt(rest, aPos + 8)
+                                      val dataVal = readInt(rest, aPos + 16)
+                                      val idx = if (rawVal >= 0) rawVal else dataVal
+                                      origPackage = strings.getOrNull(idx) ?: ""
+                                  }
+                              }
+                          }
+                      }
+                      pos += cSize
+                  }
+
+                  if (origPackage.isEmpty()) {
+                      throw IllegalStateException("تعذر قراءة اسم حزمة التطبيق الأصلي")
+                  }
+
+                  val suffix = ".cln$cloneNum"
+                  val newPackage = origPackage + suffix
+
+                  fun getAttrString(aPos: Int): String? {
+                      val rawVal = readInt(rest, aPos + 8)
+                      val dType = rest[aPos + 15].toInt() and 0xFF
+                      val dVal = readInt(rest, aPos + 16)
+                      return when {
+                          rawVal >= 0 -> strings.getOrNull(rawVal)
+                          dType == 0x03 -> strings.getOrNull(dVal)
+                          else -> null
+                      }
+                  }
+
+                  fun setAttrString(aPos: Int, value: String) {
+                      val newIdx = addNewString(value)
+                      writeInt(rest, aPos + 8, newIdx)
+                      writeU16(rest, aPos + 12, 8)
+                      rest[aPos + 14] = 0
+                      rest[aPos + 15] = 0x03
+                      writeInt(rest, aPos + 16, newIdx)
+                  }
+
+                  fun setAttrBoolean(aPos: Int, boolVal: Boolean) {
+                      writeInt(rest, aPos + 8, -1)
+                      writeU16(rest, aPos + 12, 8)
+                      rest[aPos + 14] = 0
+                      rest[aPos + 15] = 0x12
+                      writeInt(rest, aPos + 16, if (boolVal) -1 else 0)
+                  }
+
+                  // المرحلة الثانية: تعديل الحزمة، الاسم، الكلاسات، الـ Authorities، والـ Permissions
+                  pos = 0
+                  while (pos + 8 <= rest.size) {
+                      val cType = readU16(rest, pos)
+                      val cHeaderSize = readU16(rest, pos + 2)
+                      val cSize = readInt(rest, pos + 4)
+                      if (cSize <= 0 || pos + cSize > rest.size) break
+
+                      if (cType == 0x0102) {
+                          val elemNameIdx = readInt(rest, pos + cHeaderSize + 4)
+                          val elemName = strings.getOrNull(elemNameIdx) ?: ""
+                          val attrStart = readU16(rest, pos + cHeaderSize + 8)
+                          val attrSize = readU16(rest, pos + cHeaderSize + 10)
+                          val attrCount = readU16(rest, pos + cHeaderSize + 12)
+
+                          for (i in 0 until attrCount) {
+                              val aPos = pos + cHeaderSize + attrStart + i * attrSize
+                              val aNameIdx = readInt(rest, aPos + 4)
+                              val aName = strings.getOrNull(aNameIdx) ?: ""
+                              val aResId = if (aNameIdx in resIds.indices) resIds[aNameIdx] else 0
+                              val curVal = getAttrString(aPos)
+
+                              when (elemName) {
+                                  "manifest" -> {
+                                      if (aName == "package") {
+                                          setAttrString(aPos, newPackage)
+                                      } else if (aName == "sharedUserId" || aResId == 0x0101000b) {
+                                          if (!curVal.isNullOrEmpty()) setAttrString(aPos, curVal + suffix)
+                                      } else if (aName == "isSplitRequired" || aResId == 0x01010591) {
+                                          setAttrBoolean(aPos, false)
+                                      }
+                                  }
+                                  "application" -> {
+                                      if (aName == "label" || aResId == 0x01010001) {
+                                          setAttrString(aPos, newAppLabel)
+                                      } else if (aName == "extractNativeLibs" || aResId == 0x010104ea) {
+                                          setAttrBoolean(aPos, true)
+                                      } else if (aName == "isSplitRequired" || aResId == 0x01010591) {
+                                          setAttrBoolean(aPos, false)
+                                      } else if (aName in listOf("name", "backupAgent", "manageSpaceActivity", "appComponentFactory") ||
+                                          aResId in listOf(0x01010003, 0x0101027f, 0x01010004, 0x0101057a)) {
+                                          if (!curVal.isNullOrEmpty()) {
+                                              if (curVal.startsWith(".")) {
+                                                  setAttrString(aPos, origPackage + curVal)
+                                              } else if (!curVal.contains(".")) {
+                                                  setAttrString(aPos, "$origPackage.$curVal")
+                                              }
+                                          }
+                                      }
+                                  }
+                                  "activity", "activity-alias", "service", "receiver", "provider" -> {
+                                      if (aName in listOf("name", "targetActivity") || aResId in listOf(0x01010003, 0x01010202)) {
+                                          if (!curVal.isNullOrEmpty()) {
+                                              if (curVal.startsWith(".")) {
+                                                  setAttrString(aPos, origPackage + curVal)
+                                              } else if (!curVal.contains(".")) {
+                                                  setAttrString(aPos, "$origPackage.$curVal")
+                                              }
+                                          }
+                                      } else if (elemName == "provider" && (aName == "authorities" || aResId == 0x01010018)) {
+                                          if (!curVal.isNullOrEmpty()) {
+                                              val newAuth = curVal.split(";").joinToString(";") { part ->
+                                                  if (part.contains(origPackage)) part.replace(origPackage, newPackage)
+                                                  else part + suffix
+                                              }
+                                              setAttrString(aPos, newAuth)
+                                          }
+                                      }
+                                  }
+                                  "permission", "permission-group", "permission-tree", "uses-permission", "uses-permission-sdk-23" -> {
+                                      if (!curVal.isNullOrEmpty() && curVal.contains(origPackage)) {
+                                          setAttrString(aPos, curVal.replace(origPackage, newPackage))
+                                      }
+                                  }
+                                  "meta-data" -> {
+                                      if ((aName == "name" || aResId == 0x01010003) && !curVal.isNullOrEmpty()) {
+                                          if (curVal.startsWith("com.android.vending.splits") || curVal.startsWith("com.android.stamp")) {
+                                              setAttrString(aPos, "disabled.$curVal")
+                                          }
+                                      }
+                                  }
+                              }
+
+                              // تحديث أي صلاحية مخصصة مربوطة باسم الحزمة على أي عنصر
+                              if (aName in listOf("permission", "readPermission", "writePermission", "targetPackage") ||
+                                  aResId in listOf(0x01010006, 0x01010007, 0x01010008, 0x01010021)) {
+                                  if (!curVal.isNullOrEmpty() && curVal.contains(origPackage)) {
+                                      setAttrString(aPos, curVal.replace(origPackage, newPackage))
+                                  }
+                              }
+                          }
+                      }
+                      pos += cSize
+                  }
+
+                  // المرحلة الثالثة: إعادة بناء جدول النصوص StringPool بصيغة UTF-16LE القياسية
+                  val strDataOut = ByteArrayOutputStream()
+                  val offsets = IntArray(strings.size)
+                  for (i in strings.indices) {
+                      offsets[i] = strDataOut.size()
+                      val s = strings[i]
+                      val charLen = s.length
+                      if (charLen < 0x8000) {
+                          writeU16Stream(strDataOut, charLen)
+                      } else {
+                          writeU16Stream(strDataOut, 0x8000 or (charLen ushr 16))
+                          writeU16Stream(strDataOut, charLen and 0xFFFF)
+                      }
+                      strDataOut.write(s.toByteArray(Charsets.UTF_16LE))
+                      writeU16Stream(strDataOut, 0)
+                  }
+                  while (strDataOut.size() % 4 != 0) {
+                      strDataOut.write(0)
+                  }
+
+                  val strBytes = strDataOut.toByteArray()
+                  val newSpHeaderSize = 28
+                  val newStringsStart = newSpHeaderSize + strings.size * 4
+                  val newSpSize = newStringsStart + strBytes.size
+                  val totalSize = 8 + newSpSize + rest.size
+
+                  val outBuf = ByteBuffer.allocate(totalSize).order(ByteOrder.LITTLE_ENDIAN)
+                  // File Header
+                  outBuf.putShort(0x0003.toShort())
+                  outBuf.putShort(0x0008.toShort())
+                  outBuf.putInt(totalSize)
+
+                  // StringPool Header
+                  outBuf.putShort(0x0001.toShort())
+                  outBuf.putShort(newSpHeaderSize.toShort())
+                  outBuf.putInt(newSpSize)
+                  outBuf.putInt(strings.size)
+                  outBuf.putInt(0) // styleCount = 0
+                  outBuf.putInt(0) // flags = 0 (UTF-16LE)
+                  outBuf.putInt(newStringsStart)
+                  outBuf.putInt(0) // stylesStart = 0
+
+                  for (off in offsets) {
+                      outBuf.putInt(off)
+                  }
+                  outBuf.put(strBytes)
+                  outBuf.put(rest)
+
+                  return Pair(outBuf.array(), newPackage)
+              }
+
+              private fun readU16(b: ByteArray, offset: Int): Int {
+                  return (b[offset].toInt() and 0xFF) or ((b[offset + 1].toInt() and 0xFF) shl 8)
+              }
+
+              private fun readInt(b: ByteArray, offset: Int): Int {
+                  return (b[offset].toInt() and 0xFF) or
+                          ((b[offset + 1].toInt() and 0xFF) shl 8) or
+                          ((b[offset + 2].toInt() and 0xFF) shl 16) or
+                          ((b[offset + 3].toInt() and 0xFF) shl 24)
+              }
+
+              private fun writeU16(b: ByteArray, offset: Int, value: Int) {
+                  b[offset] = (value and 0xFF).toByte()
+                  b[offset + 1] = ((value ushr 8) and 0xFF).toByte()
+              }
+
+              private fun writeInt(b: ByteArray, offset: Int, value: Int) {
+                  b[offset] = (value and 0xFF).toByte()
+                  b[offset + 1] = ((value ushr 8) and 0xFF).toByte()
+                  b[offset + 2] = ((value ushr 16) and 0xFF).toByte()
+                  b[offset + 3] = ((value ushr 24) and 0xFF).toByte()
+              }
+
+              private fun writeU16Stream(out: ByteArrayOutputStream, value: Int) {
+                  out.write(value and 0xFF)
+                  out.write((value ushr 8) and 0xFF)
+              }
+          }
+          EOF
+
+          # 10. إنشاء كود الواجهة ومحرك النسخ والتوقيع MainActivity.kt
           cat << 'EOF' > app/src/main/java/com/mohamed/cloner/MainActivity.kt
           package com.mohamed.cloner
 
           import android.app.Activity
           import android.app.AlertDialog
-          import android.app.admin.DevicePolicyManager
-          import android.content.ComponentName
-          import android.content.Context
+          import android.app.PendingIntent
           import android.content.Intent
           import android.content.pm.ApplicationInfo
+          import android.content.pm.PackageInstaller
           import android.content.pm.PackageManager
           import android.graphics.Color
           import android.graphics.Typeface
           import android.graphics.drawable.GradientDrawable
           import android.net.Uri
+          import android.os.Build
           import android.os.Bundle
           import android.provider.Settings
           import android.text.Editable
@@ -206,13 +525,19 @@ jobs:
           import android.view.Gravity
           import android.view.View
           import android.view.ViewGroup
-          import android.webkit.CookieManager
-          import android.webkit.WebView
-          import android.webkit.WebViewClient
           import android.widget.*
+          import com.android.apksig.ApkSigner
+          import java.io.BufferedOutputStream
           import java.io.File
           import java.io.FileInputStream
           import java.io.FileOutputStream
+          import java.security.KeyFactory
+          import java.security.cert.CertificateFactory
+          import java.security.cert.X509Certificate
+          import java.security.spec.PKCS8EncodedKeySpec
+          import java.util.zip.ZipEntry
+          import java.util.zip.ZipFile
+          import java.util.zip.ZipOutputStream
 
           class MainActivity : Activity() {
 
@@ -230,45 +555,51 @@ jobs:
                       setPadding(32, 48, 32, 32)
                   }
 
-                  // العنوان الرئيسي
                   val titleText = TextView(this).apply {
-                      text = "ناسخ التطبيقات - Android 16"
-                      textSize = 22f
+                      text = "ناسخ التطبيقات المستقل - Android 16"
+                      textSize = 20f
                       setTextColor(Color.WHITE)
                       typeface = Typeface.DEFAULT_BOLD
                       gravity = Gravity.CENTER
-                      setPadding(0, 0, 0, 24)
+                      setPadding(0, 0, 0, 12)
                   }
                   rootLayout.addView(titleText)
 
-                  // صف الأزرار العلوية
+                  val subTitleText = TextView(this).apply {
+                      text = "نسخ وتعديل الحزمة وتوقيع V1/V2/V3 بدون مساحة عمل"
+                      textSize = 13f
+                      setTextColor(Color.parseColor("#81C784"))
+                      gravity = Gravity.CENTER
+                      setPadding(0, 0, 0, 24)
+                  }
+                  rootLayout.addView(subTitleText)
+
                   val buttonsRow = LinearLayout(this).apply {
                       orientation = LinearLayout.HORIZONTAL
                       weightSum = 2f
                       setPadding(0, 0, 0, 24)
                   }
 
-                  val workProfileBtn = createStyledButton("المساحة المزدوجة", "#1E88E5").apply {
+                  val installedClonesBtn = createStyledButton("النسخ المثبتة", "#1E88E5").apply {
                       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                           setMargins(8, 0, 8, 0)
                       }
-                      setOnClickListener { setupManagedProfile() }
+                      setOnClickListener { showInstalledClonesDialog() }
                   }
 
-                  val webSandboxBtn = createStyledButton("حاوية حسابات الويب", "#43A047").apply {
+                  val savedApksBtn = createStyledButton("ملفات APK المحفوظة", "#8E24AA").apply {
                       layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                           setMargins(8, 0, 8, 0)
                       }
-                      setOnClickListener { openWebSandboxDialog() }
+                      setOnClickListener { showSavedApksDialog() }
                   }
 
-                  buttonsRow.addView(workProfileBtn)
-                  buttonsRow.addView(webSandboxBtn)
+                  buttonsRow.addView(installedClonesBtn)
+                  buttonsRow.addView(savedApksBtn)
                   rootLayout.addView(buttonsRow)
 
-                  // شريط البحث
                   val searchInput = EditText(this).apply {
-                      hint = "ابحث عن تطبيق لنسخه..."
+                      hint = "ابحث عن التطبيق لعمل نسخة مستقلة منه..."
                       setHintTextColor(Color.parseColor("#888888"))
                       setTextColor(Color.WHITE)
                       setPadding(32, 24, 32, 24)
@@ -280,7 +611,6 @@ jobs:
                   }
                   rootLayout.addView(searchInput)
 
-                  // قائمة التطبيقات
                   listView = ListView(this).apply {
                       dividerHeight = 16
                       setPadding(0, 24, 0, 0)
@@ -303,6 +633,11 @@ jobs:
                   })
               }
 
+              override fun onResume() {
+                  super.onResume()
+                  loadInstalledApps()
+              }
+
               private fun createStyledButton(textStr: String, colorHex: String): Button {
                   return Button(this).apply {
                       text = textStr
@@ -319,14 +654,18 @@ jobs:
               private fun loadInstalledApps() {
                   val pm = packageManager
                   val installed = pm.getInstalledApplications(PackageManager.GET_META_DATA)
-                  allApps = installed.filter { pm.getLaunchIntentForPackage(it.packageName) != null && it.packageName != packageName }
-                      .sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
+                  allApps = installed.filter {
+                      pm.getLaunchIntentForPackage(it.packageName) != null &&
+                      it.packageName != packageName &&
+                      !it.packageName.contains(".cln")
+                  }.sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
+
                   filteredApps = allApps
                   adapter = AppListAdapter()
                   listView.adapter = adapter
 
                   listView.setOnItemClickListener { _, _, position, _ ->
-                      showCloneOptions(filteredApps[position])
+                      showCloneSetupDialog(filteredApps[position])
                   }
               }
 
@@ -343,144 +682,329 @@ jobs:
                   adapter.notifyDataSetChanged()
               }
 
-              private fun showCloneOptions(appInfo: ApplicationInfo) {
+              private fun showCloneSetupDialog(appInfo: ApplicationInfo) {
                   val pm = packageManager
-                  val appName = pm.getApplicationLabel(appInfo).toString()
-                  val options = arrayOf(
-                      "1. نسخ في المساحة المزدوجة (Work Profile)",
-                      "2. فتح إعدادات الاستنساخ المدمجة (Android 16)",
-                      "3. استخراج ملف APK لعمل نسخة معدلة"
-                  )
+                  val origName = pm.getApplicationLabel(appInfo).toString()
+
+                  val container = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setPadding(48, 32, 48, 16)
+                  }
+
+                  val nameLabel = TextView(this).apply {
+                      text = "اسم النسخة الجديدة:"
+                      textSize = 15f
+                      typeface = Typeface.DEFAULT_BOLD
+                  }
+                  val nameInput = EditText(this).apply {
+                      setText("$origName 2")
+                  }
+
+                  val numLabel = TextView(this).apply {
+                      text = "رقم النسخة (كل رقم ينشئ حزمة مختلفة):"
+                      textSize = 15f
+                      typeface = Typeface.DEFAULT_BOLD
+                      setPadding(0, 24, 0, 8)
+                  }
+
+                  val cloneNumbers = (1..10).map { "نسخة رقم $it (.cln$it)" }.toTypedArray()
+                  val numSpinner = Spinner(this).apply {
+                      adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_spinner_dropdown_item, cloneNumbers)
+                  }
+
+                  numSpinner.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+                      override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                          val n = position + 1
+                          nameInput.setText("$origName ${n + 1}")
+                      }
+                      override fun onNothingSelected(parent: AdapterView<*>?) {}
+                  }
+
+                  container.addView(nameLabel)
+                  container.addView(nameInput)
+                  container.addView(numLabel)
+                  container.addView(numSpinner)
 
                   AlertDialog.Builder(this)
-                      .setTitle("نسخ تطبيق: $appName")
-                      .setItems(options) { _, which ->
-                          when (which) {
-                              0 -> setupManagedProfile()
-                              1 -> openSystemCloneSettings(appInfo.packageName)
-                              2 -> extractApkFile(appInfo, appName)
-                          }
+                      .setTitle("إعداد نسخ: $origName")
+                      .setView(container)
+                      .setPositiveButton("إنشاء وتثبيت النسخة") { _, _ ->
+                          val customLabel = nameInput.text.toString().trim().ifEmpty { "$origName 2" }
+                          val cloneNum = numSpinner.selectedItemPosition + 1
+                          startCloningProcess(appInfo, cloneNum, customLabel)
                       }
                       .setNegativeButton("إلغاء", null)
                       .show()
               }
 
-              private fun setupManagedProfile() {
-                  val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
-                  if (!dpm.isProvisioningAllowed(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE)) {
-                      Toast.makeText(this, "المساحة المزدوجة مفعلة بالفعل على جهازك أو غير مدعومة حالياً، افتحها من قائمة التطبيقات!", Toast.LENGTH_LONG).show()
+              private fun startCloningProcess(appInfo: ApplicationInfo, cloneNum: Int, newAppLabel: String) {
+                  val progressDialog = AlertDialog.Builder(this)
+                      .setTitle("جاري بناء النسخة المستقلة...")
+                      .setMessage("يرجى الانتظار، جاري تعديل الحزمة ودمج الملفات وتوقيع الـ APK...")
+                      .setCancelable(false)
+                      .create()
+                  progressDialog.show()
+
+                  Thread {
+                      try {
+                          val outDir = File(getExternalFilesDir(null), "Cloned_APKs")
+                          if (!outDir.exists()) outDir.mkdirs()
+
+                          val unsignedApk = File(cacheDir, "unsigned_temp.apk")
+                          if (unsignedApk.exists()) unsignedApk.delete()
+
+                          var newPkgName = "${appInfo.packageName}.cln$cloneNum"
+                          val addedEntries = HashSet<String>()
+                          var maxDexIndex = 1
+
+                          ZipOutputStream(BufferedOutputStream(FileOutputStream(unsignedApk))).use { zos ->
+                              // 1. معالجة ملف الـ APK الأساسي
+                              ZipFile(File(appInfo.sourceDir)).use { baseZip ->
+                                  val entries = baseZip.entries()
+                                  while (entries.hasMoreElements()) {
+                                      val entry = entries.nextElement()
+                                      val name = entry.name
+
+                                      if (isSignatureFile(name)) continue
+
+                                      if (name.matches(Regex("classes(\\d*)\\.dex"))) {
+                                          val numStr = name.removePrefix("classes").removeSuffix(".dex")
+                                          val idx = if (numStr.isEmpty()) 1 else numStr.toIntOrNull() ?: 1
+                                          if (idx > maxDexIndex) maxDexIndex = idx
+                                      }
+
+                                      addedEntries.add(name)
+                                      val newEntry = ZipEntry(name)
+                                      zos.putNextEntry(newEntry)
+
+                                      if (name == "AndroidManifest.xml") {
+                                          val origBytes = baseZip.getInputStream(entry).use { it.readBytes() }
+                                          val (patchedBytes, pkg) = AxmlPatcher.patchManifest(origBytes, cloneNum, newAppLabel)
+                                          newPkgName = pkg
+                                          zos.write(patchedBytes)
+                                      } else {
+                                          baseZip.getInputStream(entry).use { input ->
+                                              input.copyTo(zos)
+                                          }
+                                      }
+                                      zos.closeEntry()
+                                  }
+                              }
+
+                              // 2. دمج ملفات الـ Split APKs (المكتبات والكود والـ assets) إن وجدت
+                              val splits = appInfo.splitSourceDirs
+                              if (!splits.isNullOrEmpty()) {
+                                  for (splitPath in splits) {
+                                      ZipFile(File(splitPath)).use { splitZip ->
+                                          val entries = splitZip.entries()
+                                          while (entries.hasMoreElements()) {
+                                              val entry = entries.nextElement()
+                                              val name = entry.name
+
+                                              if (name.startsWith("lib/") || name.startsWith("assets/")) {
+                                                  if (addedEntries.add(name)) {
+                                                      zos.putNextEntry(ZipEntry(name))
+                                                      splitZip.getInputStream(entry).use { it.copyTo(zos) }
+                                                      zos.closeEntry()
+                                                  }
+                                              } else if (name.matches(Regex("classes(\\d*)\\.dex"))) {
+                                                  maxDexIndex++
+                                                  val newDexName = "classes$maxDexIndex.dex"
+                                                  if (addedEntries.add(newDexName)) {
+                                                      zos.putNextEntry(ZipEntry(newDexName))
+                                                      splitZip.getInputStream(entry).use { it.copyTo(zos) }
+                                                      zos.closeEntry()
+                                                  }
+                                              }
+                                          }
+                                      }
+                                  }
+                              }
+                          }
+
+                          // 3. توقيع ملف الـ APK بشهادة V1 + V2 + V3
+                          val safeFileName = newPkgName.replace("[^a-zA-Z0-9._]".toRegex(), "_")
+                          val signedApk = File(outDir, "${safeFileName}.apk")
+                          if (signedApk.exists()) signedApk.delete()
+
+                          signApkOnDevice(unsignedApk, signedApk)
+                          unsignedApk.delete()
+
+                          runOnUiThread {
+                              progressDialog.dismiss()
+                              promptInstallApk(signedApk, newAppLabel, newPkgName)
+                          }
+                      } catch (e: Exception) {
+                          runOnUiThread {
+                              progressDialog.dismiss()
+                              AlertDialog.Builder(this@MainActivity)
+                                  .setTitle("خطأ أثناء النسخ")
+                                  .setMessage("التفاصيل: ${e.message}")
+                                  .setPositiveButton("حسناً", null)
+                                  .show()
+                          }
+                      }
+                  }.start()
+              }
+
+              private fun isSignatureFile(name: String): Boolean {
+                  if (!name.startsWith("META-INF/")) return false
+                  val upper = name.uppercase()
+                  return upper == "META-INF/MANIFEST.MF" ||
+                          upper.endsWith(".SF") ||
+                          upper.endsWith(".RSA") ||
+                          upper.endsWith(".DSA") ||
+                          upper.endsWith(".EC") ||
+                          upper.startsWith("META-INF/SIG-")
+              }
+
+              private fun signApkOnDevice(inputApk: File, outputApk: File) {
+                  val keyBytes = assets.open("cloner.pk8").use { it.readBytes() }
+                  val privateKey = KeyFactory.getInstance("RSA").generatePrivate(PKCS8EncodedKeySpec(keyBytes))
+
+                  val cert = assets.open("cloner.x509.der").use {
+                      CertificateFactory.getInstance("X.509").generateCertificate(it) as X509Certificate
+                  }
+
+                  val signerConfig = ApkSigner.SignerConfig.Builder(
+                      "MOHAMED_CLONER",
+                      privateKey,
+                      listOf(cert)
+                  ).build()
+
+                  val signer = ApkSigner.Builder(listOf(signerConfig))
+                      .setInputApk(inputApk)
+                      .setOutputApk(outputApk)
+                      .setV1SigningEnabled(true)
+                      .setV2SigningEnabled(true)
+                      .setV3SigningEnabled(true)
+                      .build()
+
+                  signer.sign()
+              }
+
+              private fun promptInstallApk(apkFile: File, label: String, pkgName: String) {
+                  if (!packageManager.canRequestPackageInstalls()) {
+                      AlertDialog.Builder(this)
+                          .setTitle("مطلوب صلاحية التثبيت")
+                          .setMessage("تم تجهيز وتوقيع النسخة بنجاح!\nيرجى السماح للتطبيق بتثبيت الحزم ثم اضغط تثبيت.")
+                          .setPositiveButton("منح الصلاحية") { _, _ ->
+                              val intent = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES).apply {
+                                  data = Uri.parse("package:$packageName")
+                              }
+                              startActivity(intent)
+                          }
+                          .show()
                       return
                   }
-                  try {
-                      val intent = Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE).apply {
-                          val component = ComponentName(this@MainActivity, CloneDeviceAdminReceiver::class.java)
-                          putExtra(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, component)
-                      }
-                      startActivityForResult(intent, 1001)
-                  } catch (e: Exception) {
-                      Toast.makeText(this, "خطأ أثناء تشغيل المساحة المزدوجة: ${e.message}", Toast.LENGTH_LONG).show()
-                  }
-              }
-
-              private fun openSystemCloneSettings(pkgName: String) {
-                  try {
-                      val intent = Intent("android.settings.MANAGE_CLONED_APPS")
-                      startActivity(intent)
-                  } catch (e: Exception) {
-                      try {
-                          val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                              data = Uri.parse("package:$pkgName")
-                          }
-                          startActivity(fallback)
-                          Toast.makeText(this, "تم فتح إعدادات التطبيق", Toast.LENGTH_SHORT).show()
-                      } catch (ex: Exception) {
-                          Toast.makeText(this, "تعذر فتح الإعدادات", Toast.LENGTH_SHORT).show()
-                      }
-                  }
-              }
-
-              private fun extractApkFile(appInfo: ApplicationInfo, appName: String) {
-                  try {
-                      val sourceFile = File(appInfo.sourceDir)
-                      val outDir = File(getExternalFilesDir(null), "Cloned_APKs")
-                      if (!outDir.exists()) outDir.mkdirs()
-
-                      val safeName = appName.replace("[^a-zA-Z0-9أ-ي]".toRegex(), "_")
-                      val destFile = File(outDir, "${safeName}_clone.apk")
-
-                      FileInputStream(sourceFile).use { input ->
-                          FileOutputStream(destFile).use { output ->
-                              input.copyTo(output)
-                          }
-                      }
-
-                      AlertDialog.Builder(this)
-                          .setTitle("تم استخراج نسخة الـ APK بنجاح!")
-                          .setMessage("تم حفظ نسخة ملف التطبيق في المسار:\n\n${destFile.absolutePath}")
-                          .setPositiveButton("تمام", null)
-                          .show()
-                  } catch (e: Exception) {
-                      Toast.makeText(this, "فشل استخراج الـ APK: ${e.message}", Toast.LENGTH_LONG).show()
-                  }
-              }
-
-              private fun openWebSandboxDialog() {
-                  val sites = arrayOf(
-                      "فيسبوك (حساب تاني)" to "https://m.facebook.com",
-                      "إنستجرام (حساب تاني)" to "https://www.instagram.com",
-                      "تليجرام ويب" to "https://web.telegram.org",
-                      "واتساب ويب" to "https://web.whatsapp.com",
-                      "منصة إكس (تويتر)" to "https://mobile.twitter.com",
-                      "مسح بيانات الجلسة (لتسجيل حساب جديد)" to "CLEAR_DATA"
-                  )
 
                   AlertDialog.Builder(this)
-                      .setTitle("حاوية الحسابات المتعددة المعزولة")
-                      .setItems(sites.map { it.first }.toTypedArray()) { _, which ->
-                          val selectedUrl = sites[which].second
-                          if (selectedUrl == "CLEAR_DATA") {
-                              CookieManager.getInstance().removeAllCookies(null)
-                              CookieManager.getInstance().flush()
-                              Toast.makeText(this, "تم مسح الجلسة! تقدر تسجل دخول بحساب جديد دلوقتي.", Toast.LENGTH_LONG).show()
-                          } else {
-                              launchSandboxWebView(selectedUrl)
+                      .setTitle("النسخة جاهزة للتثبيت!")
+                      .setMessage("الاسم: $label\nالحزمة الجديدة: $pkgName\n\nتم التوقيع بـ V1/V2/V3 بنجاح.")
+                      .setPositiveButton("تثبيت النسخة الآن") { _, _ ->
+                          installSignedApk(apkFile)
+                      }
+                      .setNegativeButton("لاحقاً", null)
+                      .show()
+
+                  installSignedApk(apkFile)
+              }
+
+              private fun installSignedApk(apkFile: File) {
+                  try {
+                      val packageInstaller = packageManager.packageInstaller
+                      val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL)
+                      val sessionId = packageInstaller.createSession(params)
+                      val session = packageInstaller.openSession(sessionId)
+
+                      session.openWrite("base.apk", 0, apkFile.length()).use { out ->
+                          FileInputStream(apkFile).use { input ->
+                              input.copyTo(out)
                           }
+                          session.fsync(out)
+                      }
+
+                      val intent = Intent(this, InstallReceiver::class.java).apply {
+                          setPackage(packageName)
+                      }
+                      val flags = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                          PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+                      } else {
+                          PendingIntent.FLAG_UPDATE_CURRENT
+                      }
+                      val pendingIntent = PendingIntent.getBroadcast(this, sessionId, intent, flags)
+                      session.commit(pendingIntent.intentSender)
+                      session.close()
+                  } catch (e: Exception) {
+                      Toast.makeText(this, "خطأ في بدء التثبيت: ${e.message}", Toast.LENGTH_LONG).show()
+                  }
+              }
+
+              private fun showInstalledClonesDialog() {
+                  val pm = packageManager
+                  val clones = pm.getInstalledApplications(PackageManager.GET_META_DATA).filter {
+                      it.packageName.contains(".cln")
+                  }
+
+                  if (clones.isEmpty()) {
+                      Toast.makeText(this, "لا توجد نسخ مثبتة حالياً", Toast.LENGTH_SHORT).show()
+                      return
+                  }
+
+                  val names = clones.map { "${pm.getApplicationLabel(it)} (${it.packageName})" }.toTypedArray()
+
+                  AlertDialog.Builder(this)
+                      .setTitle("النسخ المستقلة المثبتة على جهازك")
+                      .setItems(names) { _, which ->
+                          val selected = clones[which]
+                          AlertDialog.Builder(this)
+                              .setTitle(pm.getApplicationLabel(selected))
+                              .setItems(arrayOf("فتح النسخة", "إلغاء تثبيت النسخة")) { _, action ->
+                                  if (action == 0) {
+                                      val launch = pm.getLaunchIntentForPackage(selected.packageName)
+                                      if (launch != null) startActivity(launch)
+                                  } else {
+                                      val uninstall = Intent(Intent.ACTION_DELETE).apply {
+                                          data = Uri.parse("package:${selected.packageName}")
+                                      }
+                                      startActivity(uninstall)
+                                  }
+                              }
+                              .show()
                       }
                       .setNegativeButton("إغلاق", null)
                       .show()
               }
 
-              private fun launchSandboxWebView(url: String) {
-                  val dialog = AlertDialog.Builder(this).create()
-                  val container = LinearLayout(this).apply {
-                      orientation = LinearLayout.VERTICAL
+              private fun showSavedApksDialog() {
+                  val outDir = File(getExternalFilesDir(null), "Cloned_APKs")
+                  val files = outDir.listFiles()?.filter { it.name.endsWith(".apk") } ?: emptyList()
+
+                  if (files.isEmpty()) {
+                      Toast.makeText(this, "لا توجد ملفات APK محفوظة", Toast.LENGTH_SHORT).show()
+                      return
                   }
 
-                  val closeBtn = Button(this).apply {
-                      text = "إغلاق الحاوية والرجوع"
-                      setBackgroundColor(Color.parseColor("#C62828"))
-                      setTextColor(Color.WHITE)
-                      setOnClickListener { dialog.dismiss() }
-                  }
+                  val fileNames = files.map { it.name }.toTypedArray()
 
-                  val webView = WebView(this).apply {
-                      settings.javaScriptEnabled = true
-                      settings.domStorageEnabled = true
-                      webViewClient = WebViewClient()
-                      loadUrl(url)
-                  }
-
-                  container.addView(closeBtn, LinearLayout.LayoutParams(
-                      ViewGroup.LayoutParams.MATCH_PARENT,
-                      ViewGroup.LayoutParams.WRAP_CONTENT
-                  ))
-                  container.addView(webView, LinearLayout.LayoutParams(
-                      ViewGroup.LayoutParams.MATCH_PARENT,
-                      1600
-                  ))
-
-                  dialog.setView(container)
-                  dialog.show()
+                  AlertDialog.Builder(this)
+                      .setTitle("ملفات الـ APK المستنسخة والموقعة")
+                      .setItems(fileNames) { _, which ->
+                          val file = files[which]
+                          AlertDialog.Builder(this)
+                              .setTitle(file.name)
+                              .setItems(arrayOf("تثبيت النسخة", "حذف الملف")) { _, action ->
+                                  if (action == 0) {
+                                      installSignedApk(file)
+                                  } else {
+                                      file.delete()
+                                      Toast.makeText(this, "تم حذف الملف", Toast.LENGTH_SHORT).show()
+                                  }
+                              }
+                              .show()
+                      }
+                      .setNegativeButton("إغلاق", null)
+                      .show()
               }
 
               inner class AppListAdapter : BaseAdapter() {
@@ -539,11 +1063,11 @@ jobs:
           }
           EOF
 
-          # 10. بناء ملف الـ APK
+          # 11. بناء ملف الـ APK
           gradle assembleDebug --no-daemon
 
       - name: Upload Built APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mohamed-App-Cloner-Android16
+          name: Mohamed-Standalone-Cloner-Android16
           path: app/build/outputs/apk/debug/app-debug.apk
