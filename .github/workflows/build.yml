@@ -34,7 +34,7 @@ jobs:
           mkdir -p app/src/main/java/com/mohamed/cloner
           mkdir -p app/src/main/assets
 
-          # 2. توليد مفتاح وشهادة التوقيع (لتوقيع النسخ بـ V1/V2/V3 داخل الموبايل)
+          # 2. توليد مفتاح وشهادة التوقيع
           openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 10000 -subj "/CN=MohamedCloner/O=Mohamed/C=EG"
           openssl pkcs8 -topk8 -inform PEM -outform DER -in key.pem -out app/src/main/assets/cloner.pk8 -nocrypt
           openssl x509 -inform PEM -outform DER -in cert.pem -out app/src/main/assets/cloner.x509.der
@@ -75,7 +75,7 @@ jobs:
           }
           EOF
 
-          # 6. إنشاء ملف app/build.gradle مع مكتبة توقيع جوجل الرسمية apksig
+          # 6. إنشاء ملف app/build.gradle
           cat << 'EOF' > app/build.gradle
           plugins {
               id 'com.android.application'
@@ -90,8 +90,8 @@ jobs:
                   applicationId "com.mohamed.cloner"
                   minSdk 26
                   targetSdk 36
-                  versionCode 2
-                  versionName "2.0-Standalone"
+                  versionCode 3
+                  versionName "3.0-Aligned"
               }
 
               buildTypes {
@@ -118,7 +118,7 @@ jobs:
           }
           EOF
 
-          # 7. إنشاء ملف AndroidManifest.xml (بدون أي مساحة عمل)
+          # 7. إنشاء ملف AndroidManifest.xml
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -153,7 +153,7 @@ jobs:
           </manifest>
           EOF
 
-          # 8. إنشاء مستقبل عملية التثبيت المباشر InstallReceiver.kt
+          # 8. إنشاء مستقبل التثبيت InstallReceiver.kt
           cat << 'EOF' > app/src/main/java/com/mohamed/cloner/InstallReceiver.kt
           package com.mohamed.cloner
 
@@ -191,7 +191,7 @@ jobs:
           }
           EOF
 
-          # 9. إنشاء محرك تعديل ملف المانيفيست الثنائي AxmlPatcher.kt
+          # 9. إنشاء محرك تعديل المانيفيست AxmlPatcher.kt
           cat << 'EOF' > app/src/main/java/com/mohamed/cloner/AxmlPatcher.kt
           package com.mohamed.cloner
 
@@ -218,7 +218,7 @@ jobs:
                   val stringsStart = readInt(data, spPos + 20)
                   val isUtf8 = (flags and 0x100) != 0
 
-                  val strings = ArrayList<String>(stringCount + 32)
+                  val strings = ArrayList<String>(stringCount + 64)
                   for (i in 0 until stringCount) {
                       val offset = readInt(data, spPos + spHeaderSize + i * 4)
                       val strPos = spPos + stringsStart + offset
@@ -257,8 +257,20 @@ jobs:
 
                   var resIds = IntArray(0)
                   var origPackage = ""
+                  val declaredPerms = HashSet<String>()
 
-                  // المرحلة الأولى: قراءة الـ Resource IDs واستخراج اسم الحزمة الأصلي
+                  fun getAttrString(aPos: Int): String? {
+                      val rawVal = readInt(rest, aPos + 8)
+                      val dType = rest[aPos + 15].toInt() and 0xFF
+                      val dVal = readInt(rest, aPos + 16)
+                      return when {
+                          rawVal >= 0 -> strings.getOrNull(rawVal)
+                          dType == 0x03 -> strings.getOrNull(dVal)
+                          else -> null
+                      }
+                  }
+
+                  // المرحلة الأولى: قراءة الـ Resource IDs واسم الحزمة والصلاحيات المعرفة
                   var pos = 0
                   while (pos + 8 <= rest.size) {
                       val cType = readU16(rest, pos)
@@ -272,18 +284,22 @@ jobs:
                       } else if (cType == 0x0102) {
                           val elemNameIdx = readInt(rest, pos + cHeaderSize + 4)
                           val elemName = strings.getOrNull(elemNameIdx) ?: ""
-                          if (elemName == "manifest") {
-                              val attrStart = readU16(rest, pos + cHeaderSize + 8)
-                              val attrSize = readU16(rest, pos + cHeaderSize + 10)
-                              val attrCount = readU16(rest, pos + cHeaderSize + 12)
-                              for (i in 0 until attrCount) {
-                                  val aPos = pos + cHeaderSize + attrStart + i * attrSize
-                                  val aName = strings.getOrNull(readInt(rest, aPos + 4)) ?: ""
-                                  if (aName == "package") {
-                                      val rawVal = readInt(rest, aPos + 8)
-                                      val dataVal = readInt(rest, aPos + 16)
-                                      val idx = if (rawVal >= 0) rawVal else dataVal
-                                      origPackage = strings.getOrNull(idx) ?: ""
+                          val attrStart = readU16(rest, pos + cHeaderSize + 8)
+                          val attrSize = readU16(rest, pos + cHeaderSize + 10)
+                          val attrCount = readU16(rest, pos + cHeaderSize + 12)
+
+                          for (i in 0 until attrCount) {
+                              val aPos = pos + cHeaderSize + attrStart + i * attrSize
+                              val aNameIdx = readInt(rest, aPos + 4)
+                              val aName = strings.getOrNull(aNameIdx) ?: ""
+                              val aResId = if (aNameIdx in resIds.indices) resIds[aNameIdx] else 0
+                              val curVal = getAttrString(aPos)
+
+                              if (elemName == "manifest" && aName == "package" && !curVal.isNullOrEmpty()) {
+                                  origPackage = curVal
+                              } else if (elemName in listOf("permission", "permission-group", "permission-tree")) {
+                                  if ((aName == "name" || aResId == 0x01010003) && !curVal.isNullOrEmpty()) {
+                                      declaredPerms.add(curVal)
                                   }
                               }
                           }
@@ -298,14 +314,11 @@ jobs:
                   val suffix = ".cln$cloneNum"
                   val newPackage = origPackage + suffix
 
-                  fun getAttrString(aPos: Int): String? {
-                      val rawVal = readInt(rest, aPos + 8)
-                      val dType = rest[aPos + 15].toInt() and 0xFF
-                      val dVal = readInt(rest, aPos + 16)
+                  fun mapPermissionName(perm: String): String {
                       return when {
-                          rawVal >= 0 -> strings.getOrNull(rawVal)
-                          dType == 0x03 -> strings.getOrNull(dVal)
-                          else -> null
+                          perm.contains(origPackage) -> perm.replace(origPackage, newPackage)
+                          perm in declaredPerms -> perm + suffix
+                          else -> perm
                       }
                   }
 
@@ -395,9 +408,17 @@ jobs:
                                           }
                                       }
                                   }
-                                  "permission", "permission-group", "permission-tree", "uses-permission", "uses-permission-sdk-23" -> {
-                                      if (!curVal.isNullOrEmpty() && curVal.contains(origPackage)) {
-                                          setAttrString(aPos, curVal.replace(origPackage, newPackage))
+                                  "permission", "permission-group", "permission-tree" -> {
+                                      if ((aName == "name" || aResId == 0x01010003) && !curVal.isNullOrEmpty()) {
+                                          setAttrString(aPos, mapPermissionName(curVal))
+                                      } else if ((aName == "permissionGroup" || aResId == 0x0101000a) && !curVal.isNullOrEmpty()) {
+                                          setAttrString(aPos, mapPermissionName(curVal))
+                                      }
+                                  }
+                                  "uses-permission", "uses-permission-sdk-23" -> {
+                                      if ((aName == "name" || aResId == 0x01010003) && !curVal.isNullOrEmpty()) {
+                                          val mapped = mapPermissionName(curVal)
+                                          if (mapped != curVal) setAttrString(aPos, mapped)
                                       }
                                   }
                                   "meta-data" -> {
@@ -409,11 +430,11 @@ jobs:
                                   }
                               }
 
-                              // تحديث أي صلاحية مخصصة مربوطة باسم الحزمة على أي عنصر
-                              if (aName in listOf("permission", "readPermission", "writePermission", "targetPackage") ||
-                                  aResId in listOf(0x01010006, 0x01010007, 0x01010008, 0x01010021)) {
-                                  if (!curVal.isNullOrEmpty() && curVal.contains(origPackage)) {
-                                      setAttrString(aPos, curVal.replace(origPackage, newPackage))
+                              if (aName in listOf("permission", "readPermission", "writePermission", "targetPackage", "taskAffinity", "process") ||
+                                  aResId in listOf(0x01010006, 0x01010007, 0x01010008, 0x01010021, 0x01010012, 0x01010011)) {
+                                  if (!curVal.isNullOrEmpty()) {
+                                      val mapped = mapPermissionName(curVal)
+                                      if (mapped != curVal) setAttrString(aPos, mapped)
                                   }
                               }
                           }
@@ -448,20 +469,18 @@ jobs:
                   val totalSize = 8 + newSpSize + rest.size
 
                   val outBuf = ByteBuffer.allocate(totalSize).order(ByteOrder.LITTLE_ENDIAN)
-                  // File Header
                   outBuf.putShort(0x0003.toShort())
                   outBuf.putShort(0x0008.toShort())
                   outBuf.putInt(totalSize)
 
-                  // StringPool Header
                   outBuf.putShort(0x0001.toShort())
                   outBuf.putShort(newSpHeaderSize.toShort())
                   outBuf.putInt(newSpSize)
                   outBuf.putInt(strings.size)
-                  outBuf.putInt(0) // styleCount = 0
-                  outBuf.putInt(0) // flags = 0 (UTF-16LE)
+                  outBuf.putInt(0)
+                  outBuf.putInt(0)
                   outBuf.putInt(newStringsStart)
-                  outBuf.putInt(0) // stylesStart = 0
+                  outBuf.putInt(0)
 
                   for (off in offsets) {
                       outBuf.putInt(off)
@@ -502,7 +521,7 @@ jobs:
           }
           EOF
 
-          # 10. إنشاء كود الواجهة ومحرك النسخ والتوقيع MainActivity.kt
+          # 10. إنشاء كود الواجهة ومحرك البناء والمحاذاة (ZipAlign) والتوقيع MainActivity.kt
           cat << 'EOF' > app/src/main/java/com/mohamed/cloner/MainActivity.kt
           package com.mohamed.cloner
 
@@ -531,10 +550,13 @@ jobs:
           import java.io.File
           import java.io.FileInputStream
           import java.io.FileOutputStream
+          import java.io.FilterOutputStream
+          import java.io.OutputStream
           import java.security.KeyFactory
           import java.security.cert.CertificateFactory
           import java.security.cert.X509Certificate
           import java.security.spec.PKCS8EncodedKeySpec
+          import java.util.zip.CRC32
           import java.util.zip.ZipEntry
           import java.util.zip.ZipFile
           import java.util.zip.ZipOutputStream
@@ -546,13 +568,29 @@ jobs:
               private var allApps = listOf<ApplicationInfo>()
               private var filteredApps = listOf<ApplicationInfo>()
 
+              class CountingOutputStream(out: OutputStream) : FilterOutputStream(out) {
+                  var bytesWritten: Long = 0L
+                      private set
+
+                  override fun write(b: Int) {
+                      out.write(b)
+                      bytesWritten++
+                  }
+
+                  override fun write(b: ByteArray, off: Int, len: Int) {
+                      out.write(b, off, len)
+                      bytesWritten += len
+                  }
+              }
+
               override fun onCreate(savedInstanceState: Bundle?) {
                   super.onCreate(savedInstanceState)
 
                   val rootLayout = LinearLayout(this).apply {
                       orientation = LinearLayout.VERTICAL
                       setBackgroundColor(Color.parseColor("#121212"))
-                      setPadding(32, 48, 32, 32)
+                      fitsSystemWindows = true
+                      setPadding(32, 96, 32, 32)
                   }
 
                   val titleText = TextView(this).apply {
@@ -561,12 +599,12 @@ jobs:
                       setTextColor(Color.WHITE)
                       typeface = Typeface.DEFAULT_BOLD
                       gravity = Gravity.CENTER
-                      setPadding(0, 0, 0, 12)
+                      setPadding(0, 0, 0, 8)
                   }
                   rootLayout.addView(titleText)
 
                   val subTitleText = TextView(this).apply {
-                      text = "نسخ وتعديل الحزمة وتوقيع V1/V2/V3 بدون مساحة عمل"
+                      text = "دعم كامل لـ ZipAlign (4-Byte / 16KB) وتوقيع V1/V2/V3"
                       textSize = 13f
                       setTextColor(Color.parseColor("#81C784"))
                       gravity = Gravity.CENTER
@@ -737,10 +775,61 @@ jobs:
                       .show()
               }
 
+              private fun writeZipEntryProperly(
+                  zos: ZipOutputStream,
+                  countingOut: CountingOutputStream,
+                  zipFile: ZipFile,
+                  sourceEntry: ZipEntry,
+                  targetName: String
+              ) {
+                  // في أندرويد 11 إلى 16: ملف resources.arsc وملفات المكتبات .so يجب أن تكون غير مضغوطة (STORED) ومتسقة (Aligned)
+                  val mustStoreUncompressed = targetName == "resources.arsc" ||
+                          targetName.endsWith(".so") ||
+                          sourceEntry.method == ZipEntry.STORED
+
+                  val newEntry = ZipEntry(targetName)
+                  newEntry.time = 0L
+
+                  if (mustStoreUncompressed) {
+                      val crc = CRC32()
+                      var exactSize = 0L
+                      val buf = ByteArray(16384)
+                      zipFile.getInputStream(sourceEntry).use { input ->
+                          var r: Int
+                          while (input.read(buf).also { r = it } != -1) {
+                              crc.update(buf, 0, r)
+                              exactSize += r
+                          }
+                      }
+
+                      newEntry.method = ZipEntry.STORED
+                      newEntry.size = exactSize
+                      newEntry.compressedSize = exactSize
+                      newEntry.crc = crc.value
+
+                      val alignment = if (targetName.endsWith(".so")) 16384L else 4L
+                      val nameBytesLen = targetName.toByteArray(Charsets.UTF_8).size
+                      val unalignedDataOffset = countingOut.bytesWritten + 30L + nameBytesLen
+                      val rem = unalignedDataOffset % alignment
+                      val pad = if (rem == 0L) 0 else (alignment - rem).toInt()
+                      if (pad > 0) {
+                          newEntry.extra = ByteArray(pad)
+                      }
+                  } else {
+                      newEntry.method = ZipEntry.DEFLATED
+                  }
+
+                  zos.putNextEntry(newEntry)
+                  zipFile.getInputStream(sourceEntry).use { input ->
+                      input.copyTo(zos)
+                  }
+                  zos.closeEntry()
+              }
+
               private fun startCloningProcess(appInfo: ApplicationInfo, cloneNum: Int, newAppLabel: String) {
                   val progressDialog = AlertDialog.Builder(this)
-                      .setTitle("جاري بناء النسخة المستقلة...")
-                      .setMessage("يرجى الانتظار، جاري تعديل الحزمة ودمج الملفات وتوقيع الـ APK...")
+                      .setTitle("جاري بناء ومحاذاة النسخة...")
+                      .setMessage("يرجى الانتظار، جاري تعديل الحزمة وعمل ZipAlign لـ resources.arsc وتوقيع الـ APK...")
                       .setCancelable(false)
                       .create()
                   progressDialog.show()
@@ -757,7 +846,8 @@ jobs:
                           val addedEntries = HashSet<String>()
                           var maxDexIndex = 1
 
-                          ZipOutputStream(BufferedOutputStream(FileOutputStream(unsignedApk))).use { zos ->
+                          val countingOut = CountingOutputStream(BufferedOutputStream(FileOutputStream(unsignedApk)))
+                          ZipOutputStream(countingOut).use { zos ->
                               // 1. معالجة ملف الـ APK الأساسي
                               ZipFile(File(appInfo.sourceDir)).use { baseZip ->
                                   val entries = baseZip.entries()
@@ -774,24 +864,26 @@ jobs:
                                       }
 
                                       addedEntries.add(name)
-                                      val newEntry = ZipEntry(name)
-                                      zos.putNextEntry(newEntry)
 
                                       if (name == "AndroidManifest.xml") {
                                           val origBytes = baseZip.getInputStream(entry).use { it.readBytes() }
                                           val (patchedBytes, pkg) = AxmlPatcher.patchManifest(origBytes, cloneNum, newAppLabel)
                                           newPkgName = pkg
-                                          zos.write(patchedBytes)
-                                      } else {
-                                          baseZip.getInputStream(entry).use { input ->
-                                              input.copyTo(zos)
+
+                                          val manifestEntry = ZipEntry(name).apply {
+                                              method = ZipEntry.DEFLATED
+                                              time = 0L
                                           }
+                                          zos.putNextEntry(manifestEntry)
+                                          zos.write(patchedBytes)
+                                          zos.closeEntry()
+                                      } else {
+                                          writeZipEntryProperly(zos, countingOut, baseZip, entry, name)
                                       }
-                                      zos.closeEntry()
                                   }
                               }
 
-                              // 2. دمج ملفات الـ Split APKs (المكتبات والكود والـ assets) إن وجدت
+                              // 2. دمج ملفات الـ Split APKs إن وجدت مع الحفاظ على محاذاة ملفات .so
                               val splits = appInfo.splitSourceDirs
                               if (!splits.isNullOrEmpty()) {
                                   for (splitPath in splits) {
@@ -803,17 +895,13 @@ jobs:
 
                                               if (name.startsWith("lib/") || name.startsWith("assets/")) {
                                                   if (addedEntries.add(name)) {
-                                                      zos.putNextEntry(ZipEntry(name))
-                                                      splitZip.getInputStream(entry).use { it.copyTo(zos) }
-                                                      zos.closeEntry()
+                                                      writeZipEntryProperly(zos, countingOut, splitZip, entry, name)
                                                   }
                                               } else if (name.matches(Regex("classes(\\d*)\\.dex"))) {
                                                   maxDexIndex++
                                                   val newDexName = "classes$maxDexIndex.dex"
                                                   if (addedEntries.add(newDexName)) {
-                                                      zos.putNextEntry(ZipEntry(newDexName))
-                                                      splitZip.getInputStream(entry).use { it.copyTo(zos) }
-                                                      zos.closeEntry()
+                                                      writeZipEntryProperly(zos, countingOut, splitZip, entry, newDexName)
                                                   }
                                               }
                                           }
@@ -900,7 +988,7 @@ jobs:
 
                   AlertDialog.Builder(this)
                       .setTitle("النسخة جاهزة للتثبيت!")
-                      .setMessage("الاسم: $label\nالحزمة الجديدة: $pkgName\n\nتم التوقيع بـ V1/V2/V3 بنجاح.")
+                      .setMessage("الاسم: $label\nالحزمة الجديدة: $pkgName\n\nتم عمل ZipAlign والتوقيع بـ V1/V2/V3 بنجاح.")
                       .setPositiveButton("تثبيت النسخة الآن") { _, _ ->
                           installSignedApk(apkFile)
                       }
@@ -1069,5 +1157,5 @@ jobs:
       - name: Upload Built APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mohamed-Standalone-Cloner-Android16
+          name: Mohamed-Standalone-Cloner-Android16-v3
           path: app/build/outputs/apk/debug/app-debug.apk
