@@ -1,238 +1,549 @@
-name: Build Mohamed Cloner Pro V11
-on: [push, workflow_dispatch]
+name: Build Android 16 App Cloner
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
 jobs:
-  build:
+  build-apk:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20 }
-      - uses: actions/setup-java@v4
-        with: { distribution: 'temurin', java-version: '17' }
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
-      - name: Create Pro Bridge UI
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.10.2'
+
+      - name: Accept Android SDK Licenses
         run: |
-          mkdir -p dist
-          cat <<EOF > dist/index.html
-          <!DOCTYPE html>
-          <html lang="ar" dir="rtl">
-          <head>
-              <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>ناسخ محمد V11</title>
-              <style>
-                  body { font-family: sans-serif; background: #f0f2f5; margin: 0; padding: 15px; }
-                  .header { background: #fff; padding: 20px; border-radius: 20px; text-align: center; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin-bottom: 15px; }
-                  .btn { background: #007bff; color: white; border: none; padding: 12px; border-radius: 12px; cursor: pointer; font-weight: bold; width: 100%; margin-bottom: 10px; }
-                  .app-item { background: #fff; padding: 15px; border-radius: 15px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.05); }
-                  .mode-badge { padding: 10px; border-radius: 10px; text-align: center; margin-bottom: 15px; font-weight: bold; }
-                  .work { background: #d4edda; color: #155724; }
-                  .personal { background: #fff3cd; color: #856404; }
-              </style>
-          </head>
-          <body>
-              <div class="header"><h1>ناسخ محمد V11 🌉</h1></div>
-              <div id="status" class="mode-badge">جاري التحقق...</div>
-              <div id="actions"></div>
-              <div id="app-list"></div>
-              <script>
-                  function updateUI(isWork) {
-                      const status = document.getElementById('status');
-                      const actions = document.getElementById('actions');
-                      if(isWork) {
-                          status.innerText = "✅ وضع العمل (مستقبل الأوامر)";
-                          status.className = "mode-badge work";
-                          actions.innerHTML = '<p style="text-align:center">النسخة دي جاهزة لاستلام التطبيقات من النسخة الشخصية</p>';
-                      } else {
-                          status.innerText = "🏠 الوضع الشخصي (مُرسل الأوامر)";
-                          status.className = "mode-badge personal";
-                          actions.innerHTML = '<button class="btn" style="background:#e74c3c" onclick="activate()">1. تفعيل المساحة (أول مرة) 🛠️</button><button class="btn" style="background:#28a745" onclick="load()">2. عرض وتحديث تطبيقات الجهاز 🔄</button>';
-                      }
-                  }
-                  function activate() { if(window.AndroidBridge) window.AndroidBridge.activateProfile(); }
-                  function load() { if(window.AndroidBridge) window.AndroidBridge.getInstalledApps(); }
-                  window.handleAppsResponse = (base64) => {
-                      const apps = JSON.parse(decodeURIComponent(escape(atob(base64))));
-                      const container = document.getElementById('app-list');
-                      container.innerHTML = '';
-                      apps.forEach(app => {
-                          container.innerHTML += '<div class="app-item"><div><b>'+app.name+'</b><br><small>'+app.package+'</small></div><button class="btn" style="width:auto; padding:8px 15px;" onclick="clone(\''+app.package+'\')">نسخ</button></div>';
-                      });
-                  };
-                  function clone(pkg) { if(window.AndroidBridge) window.AndroidBridge.cloneApp(pkg); }
-                  window.onload = () => { setTimeout(() => { if(window.AndroidBridge) window.AndroidBridge.checkMode(); }, 1000); };
-              </script>
-          </body>
-          </html>
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
+
+      - name: Generate Project Files and Build APK
+        run: |
+          # 1. إنشاء هيكل الفولدرات
+          mkdir -p app/src/main/java/com/mohamed/cloner
+          mkdir -p app/src/main/res/xml
+
+          # 2. إنشاء ملف settings.gradle
+          cat << 'EOF' > settings.gradle
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = "MohamedCloner"
+          include ':app'
           EOF
-          echo '{"appId":"com.mohamed.cloner","appName":"Mohamed Cloner","webDir":"dist"}' > capacitor.config.json
-          echo '{"name":"app","dependencies":{"@capacitor/android":"6.0.0","@capacitor/core":"6.0.0","@capacitor/cli":"6.0.0"}}' > package.json
 
-      - name: Build and Inject Bridge Logic
-        run: |
-          npm install --legacy-peer-deps
-          npm install -g @capacitor/cli
-          npx cap add android
-          
-          # جافا: كود الجسر الذكي (Cross-Profile)
-          mkdir -p android/app/src/main/java/com/mohamed/cloner
-          cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MainActivity.java
-          package com.mohamed.cloner;
-          import android.os.*;
-          import android.webkit.JavascriptInterface;
-          import com.getcapacitor.BridgeActivity;
-          import android.content.pm.*;
-          import android.app.admin.*;
-          import android.content.*;
-          import android.util.Base64;
-          import org.json.*;
-          import java.util.List;
+          # 3. إنشاء ملف gradle.properties
+          cat << 'EOF' > gradle.properties
+          org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+          android.useAndroidX=true
+          android.suppressUnsupportedCompileSdk=36
+          EOF
 
-          public class MainActivity extends BridgeActivity {
-              private static final String ACTION_CLONE = "com.mohamed.cloner.ACTION_CLONE";
-
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  handleIntent(getIntent());
-                  
-                  this.getBridge().getWebView().addJavascriptInterface(new Object() {
-                      @JavascriptInterface
-                      public void checkMode() {
-                          runOnUiThread(() -> {
-                              UserManager um = (UserManager) getSystemService(Context.USER_SERVICE);
-                              getBridge().getWebView().evaluateJavascript("updateUI(" + um.isManagedProfile() + ")", null);
-                          });
-                      }
-                      @JavascriptInterface
-                      public void activateProfile() {
-                          runOnUiThread(() -> {
-                              Intent intent = new Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE);
-                              intent.putExtra(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, new ComponentName(MainActivity.this, MyDeviceAdminReceiver.class));
-                              startActivityForResult(intent, 555);
-                          });
-                      }
-                      @JavascriptInterface
-                      public void getInstalledApps() {
-                          runOnUiThread(() -> {
-                              try {
-                                  PackageManager pm = getPackageManager();
-                                  List<ApplicationInfo> apps = pm.getInstalledApplications(0);
-                                  JSONArray array = new JSONArray();
-                                  for (ApplicationInfo app : apps) {
-                                      if ((app.flags & ApplicationInfo.FLAG_SYSTEM) == 0) {
-                                          JSONObject obj = new JSONObject();
-                                          obj.put("name", app.loadLabel(pm).toString());
-                                          obj.put("package", app.packageName);
-                                          array.put(obj);
-                                      }
-                                  }
-                                  String b64 = Base64.encodeToString(array.toString().getBytes("UTF-8"), Base64.NO_WRAP);
-                                  getBridge().getWebView().evaluateJavascript("window.handleAppsResponse('" + b64 + "')", null);
-                              } catch (Exception e) {}
-                          });
-                      }
-                      @JavascriptInterface
-                      public void cloneApp(String pkg) {
-                          runOnUiThread(() -> {
-                              UserManager um = (UserManager) getSystemService(Context.USER_SERVICE);
-                              if (!um.isManagedProfile()) {
-                                  // نحن في الوضع الشخصي: نرسل الأمر للوضع المعزول
-                                  Intent intent = new Intent(ACTION_CLONE);
-                                  intent.putExtra("pkg", pkg);
-                                  // هذا سيفتح التطبيق في مساحة العمل تلقائياً
-                                  startActivity(intent);
-                                  android.widget.Toast.makeText(MainActivity.this, "تم إرسال أمر النسخ لمساحة العمل...", 0).show();
-                              } else {
-                                  executeClone(pkg);
-                              }
-                          });
-                      }
-                  }, "AndroidBridge");
-              }
-
-              @Override
-              protected void onNewIntent(Intent intent) {
-                  super.onNewIntent(intent);
-                  handleIntent(intent);
-              }
-
-              private void handleIntent(Intent intent) {
-                  if (intent != null && ACTION_CLONE.equals(intent.getAction())) {
-                      String pkg = intent.getStringExtra("pkg");
-                      if (pkg != null) executeClone(pkg);
-                  }
-              }
-
-              private void executeClone(String pkg) {
-                  try {
-                      DevicePolicyManager dpm = (DevicePolicyManager) getSystemService(Context.DEVICE_POLICY_SERVICE);
-                      ComponentName admin = new ComponentName(this, MyDeviceAdminReceiver.class);
-                      dpm.installExistingPackage(admin, pkg);
-                      android.widget.Toast.makeText(this, "🚀 تم استنساخ " + pkg + " بنجاح!", 0).show();
-                  } catch (Exception e) {
-                      android.widget.Toast.makeText(this, "❌ خطأ في النسخ: " + e.getMessage(), 1).show();
-                  }
-              }
+          # 4. إنشاء ملف build.gradle الرئيسي
+          cat << 'EOF' > build.gradle
+          plugins {
+              id 'com.android.application' version '8.7.2' apply false
+              id 'org.jetbrains.kotlin.android' version '1.9.24' apply false
           }
           EOF
 
-          # المانيفست مع فلاتر الاستقبال العابرة للملفات الشخصية
-          cat <<EOF > android/app/src/main/AndroidManifest.xml
+          # 5. إنشاء ملف app/build.gradle الموجه لأندرويد 16 (API 36)
+          cat << 'EOF' > app/build.gradle
+          plugins {
+              id 'com.android.application'
+              id 'org.jetbrains.kotlin.android'
+          }
+
+          android {
+              namespace 'com.mohamed.cloner'
+              compileSdk 36
+
+              defaultConfig {
+                  applicationId "com.mohamed.cloner"
+                  minSdk 26
+                  targetSdk 36
+                  versionCode 1
+                  versionName "1.0-Android16"
+              }
+
+              buildTypes {
+                  release {
+                      minifyEnabled false
+                  }
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+              kotlinOptions {
+                  jvmTarget = '17'
+              }
+          }
+
+          dependencies {
+              // استخدام مكتبات أندرويد القياسية لضمان سرعة البناء وعدم حدوث أخطاء
+          }
+          EOF
+
+          # 6. إنشاء ملف سياسات العزل device_admin.xml
+          cat << 'EOF' > app/src/main/res/xml/device_admin.xml
           <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.mohamed.cloner">
-              <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
-              <application android:allowBackup="true" android:icon="@mipmap/ic_launcher" android:label="Mohamed Cloner" android:supportsRtl="true" android:theme="@style/AppTheme">
-                  <activity android:name="com.mohamed.cloner.MainActivity" android:exported="true" android:theme="@style/AppTheme.NoActionBarLaunch" android:launchMode="singleTop">
-                      <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+          <device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-policies>
+                  <limit-password />
+              </uses-policies>
+          </device-admin>
+          EOF
+
+          # 7. إنشاء ملف AndroidManifest.xml
+          cat << 'EOF' > app/src/main/AndroidManifest.xml
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              xmlns:tools="http://schemas.android.com/tools">
+
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+                  tools:ignore="QueryAllPackagesPermission" />
+
+              <application
+                  android:label="ناسخ التطبيقات - محمد"
+                  android:icon="@android:drawable/sym_def_app_icon"
+                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+                  android:supportsRtl="true">
+
+                  <activity
+                      android:name=".MainActivity"
+                      android:exported="true"
+                      android:configChanges="orientation|screenSize">
                       <intent-filter>
-                          <action android:name="com.mohamed.cloner.ACTION_CLONE" />
-                          <category android:name="android.intent.category.DEFAULT" />
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
                       </intent-filter>
                   </activity>
-                  <receiver android:name=".MyDeviceAdminReceiver" android:label="Work Admin" android:permission="android.permission.BIND_DEVICE_ADMIN" android:exported="true">
-                      <meta-data android:name="android.app.device_admin" android:resource="@xml/device_admin" />
+
+                  <receiver
+                      android:name=".CloneDeviceAdminReceiver"
+                      android:label="محرك المساحة المزدوجة"
+                      android:permission="android.permission.BIND_DEVICE_ADMIN"
+                      android:exported="true">
+                      <meta-data
+                          android:name="android.app.device_admin"
+                          android:resource="@xml/device_admin" />
                       <intent-filter>
                           <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
                           <action android:name="android.app.action.PROFILE_PROVISIONING_COMPLETE" />
                       </intent-filter>
                   </receiver>
+
               </application>
           </manifest>
           EOF
 
-          # المستقبل (Receiver) مع تفعيل فلاتر التواصل بين الملفات
-          cat <<EOF > android/app/src/main/java/com/mohamed/cloner/MyDeviceAdminReceiver.java
-          package com.mohamed.cloner;
-          import android.app.admin.*;
-          import android.content.*;
-          public class MyDeviceAdminReceiver extends DeviceAdminReceiver {
-              @Override
-              public void onProfileProvisioningComplete(Context context, Intent intent) {
-                  DevicePolicyManager manager = (DevicePolicyManager) context.getSystemService(Context.DEVICE_POLICY_SERVICE);
-                  ComponentName componentName = new ComponentName(context, MyDeviceAdminReceiver.class);
-                  manager.setProfileEnabled(componentName);
-                  
-                  // السماح للأوامر بالانتقال من الشخصي إلى العمل
-                  IntentFilter filter = new IntentFilter("com.mohamed.cloner.ACTION_CLONE");
-                  manager.addCrossProfileIntentFilter(componentName, filter, DevicePolicyManager.FLAG_PARENT_CAN_ACCESS_MANAGED);
+          # 8. إنشاء كود محرك المساحة المزدوجة CloneDeviceAdminReceiver.kt
+          cat << 'EOF' > app/src/main/java/com/mohamed/cloner/CloneDeviceAdminReceiver.kt
+          package com.mohamed.cloner
+
+          import android.app.admin.DeviceAdminReceiver
+          import android.app.admin.DevicePolicyManager
+          import android.content.ComponentName
+          import android.content.Context
+          import android.content.Intent
+          import android.widget.Toast
+
+          class CloneDeviceAdminReceiver : DeviceAdminReceiver() {
+              override fun onProfileProvisioningComplete(context: Context, intent: Intent) {
+                  val manager = context.getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+                  val componentName = ComponentName(context.applicationContext, CloneDeviceAdminReceiver::class.java)
+                  manager.setProfileName(componentName, "مساحة النسخ - محمد")
+                  manager.setProfileEnabled(componentName)
+                  Toast.makeText(context, "تم تفعيل المساحة المزدوجة بنجاح!", Toast.LENGTH_LONG).show()
               }
           }
           EOF
-          mkdir -p android/app/src/main/res/xml
-          echo '<device-admin></device-admin>' > android/app/src/main/res/xml/device_admin.xml
-          sed -i 's/versionCode 1/versionCode 60/g' android/app/build.gradle
-          npx cap sync android
 
-      - name: Build APK
-        run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          # 9. إنشاء كود الواجهة والتطبيق الرئيسي MainActivity.kt
+          cat << 'EOF' > app/src/main/java/com/mohamed/cloner/MainActivity.kt
+          package com.mohamed.cloner
 
-      - name: Upload APK
+          import android.app.Activity
+          import android.app.AlertDialog
+          import android.app.admin.DevicePolicyManager
+          import android.content.ComponentName
+          import android.content.Context
+          import android.content.Intent
+          import android.content.pm.ApplicationInfo
+          import android.content.pm.PackageManager
+          import android.graphics.Color
+          import android.graphics.Typeface
+          import android.graphics.drawable.GradientDrawable
+          import android.net.Uri
+          import android.os.Bundle
+          import android.provider.Settings
+          import android.text.Editable
+          import android.text.TextWatcher
+          import android.view.Gravity
+          import android.view.View
+          import android.view.ViewGroup
+          import android.webkit.CookieManager
+          import android.webkit.WebView
+          import android.webkit.WebViewClient
+          import android.widget.*
+          import java.io.File
+          import java.io.FileInputStream
+          import java.io.FileOutputStream
+
+          class MainActivity : Activity() {
+
+              private lateinit var listView: ListView
+              private lateinit var adapter: AppListAdapter
+              private var allApps = listOf<ApplicationInfo>()
+              private var filteredApps = listOf<ApplicationInfo>()
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+
+                  val rootLayout = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                      setBackgroundColor(Color.parseColor("#121212"))
+                      setPadding(32, 48, 32, 32)
+                  }
+
+                  // العنوان الرئيسي
+                  val titleText = TextView(this).apply {
+                      text = "ناسخ التطبيقات - Android 16"
+                      textSize = 22f
+                      setTextColor(Color.WHITE)
+                      typeface = Typeface.DEFAULT_BOLD
+                      gravity = Gravity.CENTER
+                      setPadding(0, 0, 0, 24)
+                  }
+                  rootLayout.addView(titleText)
+
+                  // صف الأزرار العلوية
+                  val buttonsRow = LinearLayout(this).apply {
+                      orientation = LinearLayout.HORIZONTAL
+                      weightSum = 2f
+                      setPadding(0, 0, 0, 24)
+                  }
+
+                  val workProfileBtn = createStyledButton("المساحة المزدوجة", "#1E88E5").apply {
+                      layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                          setMargins(8, 0, 8, 0)
+                      }
+                      setOnClickListener { setupManagedProfile() }
+                  }
+
+                  val webSandboxBtn = createStyledButton("حاوية حسابات الويب", "#43A047").apply {
+                      layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                          setMargins(8, 0, 8, 0)
+                      }
+                      setOnClickListener { openWebSandboxDialog() }
+                  }
+
+                  buttonsRow.addView(workProfileBtn)
+                  buttonsRow.addView(webSandboxBtn)
+                  rootLayout.addView(buttonsRow)
+
+                  // شريط البحث
+                  val searchInput = EditText(this).apply {
+                      hint = "ابحث عن تطبيق لنسخه..."
+                      setHintTextColor(Color.parseColor("#888888"))
+                      setTextColor(Color.WHITE)
+                      setPadding(32, 24, 32, 24)
+                      background = GradientDrawable().apply {
+                          setColor(Color.parseColor("#1E1E1E"))
+                          cornerRadius = 24f
+                          setStroke(2, Color.parseColor("#333333"))
+                      }
+                  }
+                  rootLayout.addView(searchInput)
+
+                  // قائمة التطبيقات
+                  listView = ListView(this).apply {
+                      dividerHeight = 16
+                      setPadding(0, 24, 0, 0)
+                  }
+                  rootLayout.addView(listView, LinearLayout.LayoutParams(
+                      ViewGroup.LayoutParams.MATCH_PARENT,
+                      ViewGroup.LayoutParams.MATCH_PARENT
+                  ))
+
+                  setContentView(rootLayout)
+
+                  loadInstalledApps()
+
+                  searchInput.addTextChangedListener(object : TextWatcher {
+                      override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                      override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                          filterApps(s.toString())
+                      }
+                      override fun afterTextChanged(s: Editable?) {}
+                  })
+              }
+
+              private fun createStyledButton(textStr: String, colorHex: String): Button {
+                  return Button(this).apply {
+                      text = textStr
+                      setTextColor(Color.WHITE)
+                      textSize = 14f
+                      typeface = Typeface.DEFAULT_BOLD
+                      background = GradientDrawable().apply {
+                          setColor(Color.parseColor(colorHex))
+                          cornerRadius = 24f
+                      }
+                  }
+              }
+
+              private fun loadInstalledApps() {
+                  val pm = packageManager
+                  val installed = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+                  allApps = installed.filter { pm.getLaunchIntentForPackage(it.packageName) != null && it.packageName != packageName }
+                      .sortedBy { pm.getApplicationLabel(it).toString().lowercase() }
+                  filteredApps = allApps
+                  adapter = AppListAdapter()
+                  listView.adapter = adapter
+
+                  listView.setOnItemClickListener { _, _, position, _ ->
+                      showCloneOptions(filteredApps[position])
+                  }
+              }
+
+              private fun filterApps(query: String) {
+                  val pm = packageManager
+                  filteredApps = if (query.isEmpty()) {
+                      allApps
+                  } else {
+                      allApps.filter {
+                          pm.getApplicationLabel(it).toString().contains(query, ignoreCase = true) ||
+                          it.packageName.contains(query, ignoreCase = true)
+                      }
+                  }
+                  adapter.notifyDataSetChanged()
+              }
+
+              private fun showCloneOptions(appInfo: ApplicationInfo) {
+                  val pm = packageManager
+                  val appName = pm.getApplicationLabel(appInfo).toString()
+                  val options = arrayOf(
+                      "1. نسخ في المساحة المزدوجة (Work Profile)",
+                      "2. فتح إعدادات الاستنساخ المدمجة (Android 16)",
+                      "3. استخراج ملف APK لعمل نسخة معدلة"
+                  )
+
+                  AlertDialog.Builder(this)
+                      .setTitle("نسخ تطبيق: $appName")
+                      .setItems(options) { _, which ->
+                          when (which) {
+                              0 -> setupManagedProfile()
+                              1 -> openSystemCloneSettings(appInfo.packageName)
+                              2 -> extractApkFile(appInfo, appName)
+                          }
+                      }
+                      .setNegativeButton("إلغاء", null)
+                      .show()
+              }
+
+              private fun setupManagedProfile() {
+                  val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as DevicePolicyManager
+                  if (!dpm.isProvisioningAllowed(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE)) {
+                      Toast.makeText(this, "المساحة المزدوجة مفعلة بالفعل على جهازك أو غير مدعومة حالياً، افتحها من قائمة التطبيقات!", Toast.LENGTH_LONG).show()
+                      return
+                  }
+                  try {
+                      val intent = Intent(DevicePolicyManager.ACTION_PROVISION_MANAGED_PROFILE).apply {
+                          val component = ComponentName(this@MainActivity, CloneDeviceAdminReceiver::class.java)
+                          putExtra(DevicePolicyManager.EXTRA_PROVISIONING_DEVICE_ADMIN_COMPONENT_NAME, component)
+                      }
+                      startActivityForResult(intent, 1001)
+                  } catch (e: Exception) {
+                      Toast.makeText(this, "خطأ أثناء تشغيل المساحة المزدوجة: ${e.message}", Toast.LENGTH_LONG).show()
+                  }
+              }
+
+              private fun openSystemCloneSettings(pkgName: String) {
+                  try {
+                      val intent = Intent("android.settings.MANAGE_CLONED_APPS")
+                      startActivity(intent)
+                  } catch (e: Exception) {
+                      try {
+                          val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                              data = Uri.parse("package:$pkgName")
+                          }
+                          startActivity(fallback)
+                          Toast.makeText(this, "تم فتح إعدادات التطبيق", Toast.LENGTH_SHORT).show()
+                      } catch (ex: Exception) {
+                          Toast.makeText(this, "تعذر فتح الإعدادات", Toast.LENGTH_SHORT).show()
+                      }
+                  }
+              }
+
+              private fun extractApkFile(appInfo: ApplicationInfo, appName: String) {
+                  try {
+                      val sourceFile = File(appInfo.sourceDir)
+                      val outDir = File(getExternalFilesDir(null), "Cloned_APKs")
+                      if (!outDir.exists()) outDir.mkdirs()
+
+                      val safeName = appName.replace("[^a-zA-Z0-9أ-ي]".toRegex(), "_")
+                      val destFile = File(outDir, "${safeName}_clone.apk")
+
+                      FileInputStream(sourceFile).use { input ->
+                          FileOutputStream(destFile).use { output ->
+                              input.copyTo(output)
+                          }
+                      }
+
+                      AlertDialog.Builder(this)
+                          .setTitle("تم استخراج نسخة الـ APK بنجاح!")
+                          .setMessage("تم حفظ نسخة ملف التطبيق في المسار:\n\n${destFile.absolutePath}")
+                          .setPositiveButton("تمام", null)
+                          .show()
+                  } catch (e: Exception) {
+                      Toast.makeText(this, "فشل استخراج الـ APK: ${e.message}", Toast.LENGTH_LONG).show()
+                  }
+              }
+
+              private fun openWebSandboxDialog() {
+                  val sites = arrayOf(
+                      "فيسبوك (حساب تاني)" to "https://m.facebook.com",
+                      "إنستجرام (حساب تاني)" to "https://www.instagram.com",
+                      "تليجرام ويب" to "https://web.telegram.org",
+                      "واتساب ويب" to "https://web.whatsapp.com",
+                      "منصة إكس (تويتر)" to "https://mobile.twitter.com",
+                      "مسح بيانات الجلسة (لتسجيل حساب جديد)" to "CLEAR_DATA"
+                  )
+
+                  AlertDialog.Builder(this)
+                      .setTitle("حاوية الحسابات المتعددة المعزولة")
+                      .setItems(sites.map { it.first }.toTypedArray()) { _, which ->
+                          val selectedUrl = sites[which].second
+                          if (selectedUrl == "CLEAR_DATA") {
+                              CookieManager.getInstance().removeAllCookies(null)
+                              CookieManager.getInstance().flush()
+                              Toast.makeText(this, "تم مسح الجلسة! تقدر تسجل دخول بحساب جديد دلوقتي.", Toast.LENGTH_LONG).show()
+                          } else {
+                              launchSandboxWebView(selectedUrl)
+                          }
+                      }
+                      .setNegativeButton("إغلاق", null)
+                      .show()
+              }
+
+              private fun launchSandboxWebView(url: String) {
+                  val dialog = AlertDialog.Builder(this).create()
+                  val container = LinearLayout(this).apply {
+                      orientation = LinearLayout.VERTICAL
+                  }
+
+                  val closeBtn = Button(this).apply {
+                      text = "إغلاق الحاوية والرجوع"
+                      setBackgroundColor(Color.parseColor("#C62828"))
+                      setTextColor(Color.WHITE)
+                      setOnClickListener { dialog.dismiss() }
+                  }
+
+                  val webView = WebView(this).apply {
+                      settings.javaScriptEnabled = true
+                      settings.domStorageEnabled = true
+                      webViewClient = WebViewClient()
+                      loadUrl(url)
+                  }
+
+                  container.addView(closeBtn, LinearLayout.LayoutParams(
+                      ViewGroup.LayoutParams.MATCH_PARENT,
+                      ViewGroup.LayoutParams.WRAP_CONTENT
+                  ))
+                  container.addView(webView, LinearLayout.LayoutParams(
+                      ViewGroup.LayoutParams.MATCH_PARENT,
+                      1600
+                  ))
+
+                  dialog.setView(container)
+                  dialog.show()
+              }
+
+              inner class AppListAdapter : BaseAdapter() {
+                  override fun getCount(): Int = filteredApps.size
+                  override fun getItem(position: Int): Any = filteredApps[position]
+                  override fun getItemId(position: Int): Long = position.toLong()
+
+                  override fun getView(position: Int, convertView: View?, parent: ViewGroup?): View {
+                      val app = filteredApps[position]
+                      val pm = packageManager
+
+                      val row = LinearLayout(this@MainActivity).apply {
+                          orientation = LinearLayout.HORIZONTAL
+                          gravity = Gravity.CENTER_VERTICAL
+                          setPadding(24, 24, 24, 24)
+                          background = GradientDrawable().apply {
+                              setColor(Color.parseColor("#1E1E1E"))
+                              cornerRadius = 20f
+                          }
+                      }
+
+                      val icon = ImageView(this@MainActivity).apply {
+                          setImageDrawable(pm.getApplicationIcon(app))
+                          layoutParams = LinearLayout.LayoutParams(110, 110).apply {
+                              setMargins(16, 0, 24, 0)
+                          }
+                      }
+
+                      val textContainer = LinearLayout(this@MainActivity).apply {
+                          orientation = LinearLayout.VERTICAL
+                          layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                      }
+
+                      val nameView = TextView(this@MainActivity).apply {
+                          text = pm.getApplicationLabel(app).toString()
+                          setTextColor(Color.WHITE)
+                          textSize = 16f
+                          typeface = Typeface.DEFAULT_BOLD
+                      }
+
+                      val pkgView = TextView(this@MainActivity).apply {
+                          text = app.packageName
+                          setTextColor(Color.parseColor("#9E9E9E"))
+                          textSize = 12f
+                      }
+
+                      textContainer.addView(nameView)
+                      textContainer.addView(pkgView)
+
+                      row.addView(icon)
+                      row.addView(textContainer)
+
+                      return row
+                  }
+              }
+          }
+          EOF
+
+          # 10. بناء ملف الـ APK
+          gradle assembleDebug --no-daemon
+
+      - name: Upload Built APK
         uses: actions/upload-artifact@v4
         with:
-          name: Mohamed-Cloner-V11
-          path: "android/app/build/outputs/apk/debug/*.apk"
-          
+          name: Mohamed-App-Cloner-Android16
+          path: app/build/outputs/apk/debug/app-debug.apk
